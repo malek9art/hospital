@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'lab' | 'pharmacy' | 'billing' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'inpatient' | 'lab' | 'pharmacy' | 'billing' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -327,6 +327,116 @@ function Clinic({ m }: { m: Me }) {
   );
 }
 
+
+// --------------------------------------------------------------- Inpatient ---
+function Inpatient({ m }: { m: Me }) {
+  const [beds, setBeds] = useState<any[]>([]); const [wards, setWards] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>(null); const [admissions, setAdmissions] = useState<any[]>([]);
+  const [patients, setPatients] = useState<any[]>([]);
+  const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+  const [admit, setAdmit] = useState({ patientId: '', bedId: '', reason: '' });
+  const [transfer, setTransfer] = useState<{ id: string; toBedId: string; reason: string } | null>(null);
+  const [discharge, setDischarge] = useState<{ id: string; dischargeType: string; summary: string } | null>(null);
+
+  async function load() {
+    try {
+      const [b, a, p] = await Promise.all([
+        api<any>('/api/inpatient/beds'),
+        has(m, 'inpatient.admit') ? api<any>('/api/inpatient/admissions') : Promise.resolve({ items: [] }),
+        api<any>('/api/patients?limit=100'),
+      ]);
+      setBeds(b.beds); setWards(b.wards); setSummary(b.summary); setAdmissions(a.items); setPatients(p.items);
+    } catch (e: any) { setErr(e.message); }
+  }
+  useEffect(() => { load(); }, []);
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); await load(); } catch (e: any) { setErr(e.message + (e.details?.admissionId ? ` (${e.details.admissionId})` : '')); }
+  }
+  const statusColor: Record<string, string> = { available: 'bg-emerald-50 border-emerald-200', occupied: 'bg-rose-50 border-rose-200', cleaning: 'bg-amber-50 border-amber-200', maintenance: 'bg-slate-100 border-slate-300' };
+  const statusLabel: Record<string, string> = { available: 'متاح', occupied: 'مشغول', cleaning: 'تنظيف', maintenance: 'صيانة' };
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+      {summary && <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {[['الإجمالي', summary.total], ['مشغول', summary.occupied], ['متاح', summary.available], ['تنظيف', summary.cleaning], ['صيانة', summary.maintenance]].map(([l, v]) => (
+          <div key={String(l)} className="card p-3"><p className="text-xs text-slate-500">{l}</p><p className="text-xl font-bold">{v}</p></div>
+        ))}
+      </div>}
+      {has(m, 'inpatient.admit') && (
+        <Card title="تنويم مريض (أمر طبيب)">
+          <div className="grid md:grid-cols-4 gap-2">
+            <div><label className="label">المريض</label>
+              <select className="input" value={admit.patientId} onChange={(e) => setAdmit({ ...admit, patientId: e.target.value })}>
+                <option value="">—</option>{patients.map((p: any) => <option key={p.id} value={p.id}>{p.fullNameAr} · {p.mrn}</option>)}
+              </select></div>
+            <div><label className="label">السرير المتاح</label>
+              <select className="input" value={admit.bedId} onChange={(e) => setAdmit({ ...admit, bedId: e.target.value })}>
+                <option value="">—</option>{beds.filter((b) => b.bed_status === 'available').map((b: any) => <option key={b.id} value={b.id}>{b.ward_name} · {b.room_no}/{b.bed_no}</option>)}
+              </select></div>
+            <div className="md:col-span-2"><label className="label">سبب التنويم</label>
+              <input className="input" value={admit.reason} onChange={(e) => setAdmit({ ...admit, reason: e.target.value })} placeholder="مثال: مراقبة ضغط غير مستقر" /></div>
+          </div>
+          <button className="btn-primary mt-2" disabled={!admit.patientId || !admit.reason}
+            onClick={() => act(async () => {
+              await api('/api/inpatient/admissions', { method: 'POST', body: JSON.stringify({ patientId: admit.patientId, bedId: admit.bedId || undefined, reason: admit.reason }) });
+              setAdmit({ patientId: '', bedId: '', reason: '' });
+            }, 'تم تنويم المريض وتخصيص السرير')}>تنويم</button>
+          <p className="text-xs text-slate-500 mt-1">يُحوَّل المريض إلى زيارة تنويم مستقلة؛ الأيام تُحتسب عند الخروج.</p>
+        </Card>
+      )}
+      <Card title="خريطة الأسرّة">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          {beds.map((b) => (
+            <div key={b.id} className={`border rounded-lg p-2 text-sm ${statusColor[b.bed_status]}`}>
+              <div className="flex justify-between"><span className="font-semibold">{b.ward_name} · {b.room_no}/{b.bed_no}</span><span className="badge bg-white/70">{statusLabel[b.bed_status]}</span></div>
+              {b.patient_name && <p className="text-xs mt-1">{b.patient_name} <span className="text-slate-500">{b.mrn}</span></p>}
+              {b.bed_status === 'cleaning' && has(m, 'inpatient.bed.manage') && (
+                <button className="btn-ghost text-xs mt-1" onClick={() => act(() => api(`/api/inpatient/beds/${b.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'available' }) }), 'السرير متاح الآن')}>تم التنظيف</button>
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+      {has(m, 'inpatient.admit') && (
+        <Card title="التنويمات">
+          <div className="overflow-x-auto"><table className="w-full min-w-[800px]"><thead><tr><th className="th">رقم التنويم</th><th className="th">المريض</th><th className="th">السرير</th><th className="th">الطبيب</th><th className="th">الدخول</th><th className="th">الحالة</th><th className="th"></th></tr></thead>
+            <tbody>{admissions.map((a) => <tr key={a.id}>
+              <td className="td font-mono text-xs">{a.admission_no}</td><td className="td">{a.patient_name}<span className="block text-xs text-slate-400">{a.mrn}</span></td>
+              <td className="td">{a.ward_name ? `${a.ward_name} · ${a.room_no}/${a.bed_no}` : '—'}</td><td className="td">{a.doctor_name}</td><td className="td">{dt(a.admitted_at)}</td>
+              <td className="td"><Badge value={a.status === 'active' ? 'open' : 'completed'} /></td>
+              <td className="td space-x-1 space-x-reverse">
+                {a.status === 'active' && <>
+                  <button className="btn-ghost text-xs" onClick={() => setTransfer({ id: a.id, toBedId: '', reason: '' })}>نقل</button>
+                  <button className="btn-primary text-xs" onClick={() => setDischarge({ id: a.id, dischargeType: 'home', summary: '' })}>خروج</button>
+                </>}
+              </td></tr>)}</tbody></table></div>
+        </Card>
+      )}
+      {transfer && <Card title="نقل المريض" action={<button className="btn-ghost text-xs" onClick={() => setTransfer(null)}>إغلاق</button>}>
+        <select className="input mb-2" value={transfer.toBedId} onChange={(e) => setTransfer({ ...transfer, toBedId: e.target.value })}>
+          <option value="">اختر السرير الهدف</option>
+          {beds.filter((b) => b.bed_status === 'available').map((b: any) => <option key={b.id} value={b.id}>{b.ward_name} · {b.room_no}/{b.bed_no}</option>)}
+        </select>
+        <input className="input mb-2" placeholder="سبب النقل" value={transfer.reason} onChange={(e) => setTransfer({ ...transfer, reason: e.target.value })} />
+        <button className="btn-primary" disabled={!transfer.toBedId || transfer.reason.length < 3}
+          onClick={() => act(() => api(`/api/inpatient/admissions/${transfer.id}/transfer`, { method: 'POST', body: JSON.stringify({ toBedId: transfer.toBedId, reason: transfer.reason }) }), 'تم نقل المريض').then(() => setTransfer(null))}>تأكيد النقل</button>
+      </Card>}
+      {discharge && <Card title="خروج المريض" action={<button className="btn-ghost text-xs" onClick={() => setDischarge(null)}>إغلاق</button>}>
+        <select className="input mb-2" value={discharge.dischargeType} onChange={(e) => setDischarge({ ...discharge, dischargeType: e.target.value })}>
+          <option value="home">إلى المنزل</option><option value="transfer">تحويل لمنشأة أخرى</option>
+          <option value="deceased">وفاة</option><option value="against_advice">خروج ضد النصيحة الطبية</option>
+        </select>
+        <textarea className="input mb-2" rows={4} placeholder="ملخص الخروج (20 حرفًا على الأقل)" value={discharge.summary} onChange={(e) => setDischarge({ ...discharge, summary: e.target.value })} />
+        <button className="btn-primary" disabled={discharge.summary.length < 20}
+          onClick={() => act(() => api(`/api/inpatient/admissions/${discharge.id}/discharge`, { method: 'POST', body: JSON.stringify({ dischargeType: discharge.dischargeType, summary: discharge.summary }) }), 'تم تسجيل الخروج واحتساب أيام الإقامة').then(() => setDischarge(null))}>
+          تأكيد الخروج
+        </button>
+      </Card>}
+    </div>
+  );
+}
+
 // -------------------------------------------------------------------- Lab ----
 function Lab({ m }: { m: Me }) {
   const [status, setStatus] = useState('all'); const [items, setItems] = useState<any[]>([]);
@@ -480,17 +590,18 @@ function Portal() {
 }
 
 // ------------------------------------------------------------------- App -----
-const NAV: { key: PageKey; label: string; perm: string }[] = [
-  { key: 'dashboard', label: 'لوحة القيادة', perm: 'report.read' },
-  { key: 'patients', label: 'المرضى', perm: 'patient.read' },
-  { key: 'appointments', label: 'المواعيد والاستقبال', perm: 'appointment.read' },
-  { key: 'clinic', label: 'العيادة', perm: 'clinical.encounter.read' },
-  { key: 'lab', label: 'المختبر', perm: 'lab.sample.collect' },
-  { key: 'pharmacy', label: 'الصيدلية', perm: 'pharmacy.prescription.read' },
-  { key: 'billing', label: 'الفوترة', perm: 'billing.invoice.read' },
-  { key: 'audit', label: 'التدقيق', perm: 'audit.read' },
-  { key: 'modules', label: 'حالة الوحدات', perm: 'patient.read' },
-  { key: 'portal', label: 'بوابة المريض', perm: 'portal.self' },
+const NAV: { key: PageKey; label: string; perms: string[] }[] = [
+  { key: 'dashboard', label: 'لوحة القيادة', perms: ['report.read'] },
+  { key: 'patients', label: 'المرضى', perms: ['patient.read'] },
+  { key: 'appointments', label: 'المواعيد والاستقبال', perms: ['appointment.read'] },
+  { key: 'clinic', label: 'العيادة', perms: ['clinical.encounter.read'] },
+  { key: 'lab', label: 'المختبر', perms: ['lab.sample.collect'] },
+  { key: 'inpatient', label: 'التنويم والأسرّة', perms: ['inpatient.admit', 'inpatient.bed.manage'] },
+  { key: 'pharmacy', label: 'الصيدلية', perms: ['pharmacy.prescription.read'] },
+  { key: 'billing', label: 'الفوترة', perms: ['billing.invoice.read'] },
+  { key: 'audit', label: 'التدقيق', perms: ['audit.read'] },
+  { key: 'modules', label: 'حالة الوحدات', perms: ['patient.read'] },
+  { key: 'portal', label: 'بوابة المريض', perms: ['portal.self'] },
 ];
 
 export default function App() {
@@ -503,13 +614,13 @@ export default function App() {
     setUnauthorizedHandler?.(() => { resetCsrf(); setAuth(null); });
   }, []);
   function pick(m: Me) {
-    const first = NAV.find((n) => has(m, n.perm));
+    const first = NAV.find((n) => n.perms.some((p) => has(m, p)));
     if (first) setPage(first.key);
   }
   async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ } resetCsrf(); setAuth(null); }
   if (loading) return <div className="p-10 text-center text-slate-500">جارٍ التحميل…</div>;
   if (!auth) return <LoginPage onLogin={(m) => { setAuth(m); pick(m); }} notice={notice} />;
-  const allowed = NAV.filter((n) => has(auth, n.perm));
+  const allowed = NAV.filter((n) => n.perms.some((p) => has(auth, p)));
   return (
     <div className="min-h-screen flex flex-col">
       <header className="bg-white border-b sticky top-0 z-10">
@@ -530,6 +641,7 @@ export default function App() {
         {page === 'patients' && <Patients m={auth} />}
         {page === 'appointments' && <Appointments m={auth} />}
         {page === 'clinic' && <Clinic m={auth} />}
+        {page === 'inpatient' && <Inpatient m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}
         {page === 'billing' && <Billing m={auth} />}

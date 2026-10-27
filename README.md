@@ -52,9 +52,9 @@ npm start               # http://localhost:8080
 
 تُعرض هذه الحالة داخل النظام في صفحة «حالة الوحدات» من مصدر واحد (`meta/modules`).
 
-**منفذ فعليًا ومختبر:** المرضى والملف الطبي (تسجيل/بحث/حساسية/أمراض مزمنة/دمج مدقق/سجل اطلاع) · المواعيد والاستقبال (حجز، منع تعارض، حضور، إلغاء، قائمة اليوم) · العيادات (زيارة، علامات حيوية، SOAP، تشخيص ICD-10، طلب تحاليل، وصفة، إغلاق) · المختبر (عينة، نتيجة، قيم حرجة وتنبيه، اعتماد منفصل، تصحيح مدقق) · الصيدلية (تحقق حساسية/تداخل، صرف FEFO، دفعات ومخزون وحركات، منع تكرار) · الفوترة (فواتير تلقائية، دفع idempotent، إلغاء مدقق) · التدقيق (سلسلة hash قابلة للتحقق) · إدارة المستخدمين والأدوار والجلسات · تعدد المنشآت (RLS) · لوحة مؤشرات حقيقية · بوابة مريض للقراءة.
+**منفذ فعليًا ومختبر:** المرضى والملف الطبي (تسجيل/بحث/حساسية/أمراض مزمنة/دمج مدقق/سجل اطلاع) · المواعيد والاستقبال (حجز، منع تعارض، حضور، إلغاء، قائمة اليوم) · العيادات (زيارة، علامات حيوية، SOAP، تشخيص ICD-10، طلب تحاليل، وصفة، إغلاق) · المختبر (عينة، نتيجة، قيم حرجة وتنبيه، اعتماد منفصل، تصحيح مدقق) · الصيدلية (تحقق حساسية/تداخل، صرف FEFO، دفعات ومخزون وحركات، منع تكرار) · **التنويم والأسرّة** (تنويم بأمر طبيب، سرير متاح/مشغول/تنظيف/صيانة، نقل، خروج بملخص، احتساب أيام الإقامة وترحيلها للفاتورة) · الفوترة (فواتير تلقائية، دفع idempotent، إلغاء مدقق) · التدقيق (سلسلة hash قابلة للتحقق) · إدارة المستخدمين والأدوار والجلسات · تعدد المنشآت (RLS) · لوحة مؤشرات حقيقية · بوابة مريض للقراءة.
 
-**جزئي:** التأمين (بوليصات/مطالبات داخلية بلا ربط خارجي) · التنويم (بيانات الأجنحة/الأسرّة موجودة بلا شاشة تنويم/نقل/خروج كاملة) · الطوارئ (نوع زيارة + فرز في البيانات فقط) · التمريض (علامات وملاحظات بلا خطط رعاية/تسليم مناوبات) · المخازن (أدوية فقط) · المالية (تحصيل وفواتير بلا دفتر أستاذ) · التقارير (CSV مدقق، PDF عبر طباعة المتصفح) · التكامل (FHIR جزئي: Patient/Observation؛ outbox بلا مزود بريد/SMS) · البوابة (لا حجز/دفع إلكتروني).
+**جزئي:** التأمين (بوليصات/مطالبات داخلية بلا ربط خارجي) · الطوارئ (نوع زيارة + فرز في البيانات فقط) · التمريض (علامات وملاحظات بلا خطط رعاية/تسليم مناوبات) · المخازن (أدوية فقط) · المالية (تحصيل وفواتير بلا دفتر أستاذ) · التقارير (CSV مدقق، PDF عبر طباعة المتصفح) · التكامل (FHIR جزئي: Patient/Observation؛ outbox بلا مزود بريد/SMS) · البوابة (لا حجز/دفع إلكتروني).
 
 **غير منفذ:** الأشعة/PACS/DICOM · العمليات والتخدير · العناية المركزة · بنك الدم · التغذية الطبية · التعقيم ومكافحة العدوى · الموارد البشرية · الأصول والصيانة · الجودة/الامتثال · طلبات الأشعة.
 
@@ -73,7 +73,7 @@ npm start               # http://localhost:8080
 
 ## 5) واجهات API (مختصر)
 
-`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (+vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
+`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (+vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
 
 الكود هو العقد الفعلي (Zod + TypeScript). أخطاء موحدة: `{error:{code,message,details},requestId}`. التغييرات تتطلب رأس `x-csrf-token`، والمدفوعات/الصرف تقبل `Idempotency-Key`.
 
@@ -81,10 +81,10 @@ npm start               # http://localhost:8080
 
 ```
 $ npm test
- ✓ test/hms.test.ts  (26 tests)   ← رحلة مريض كاملة + صلاحيات + RLS + تدقيق + FHIR
+ ✓ test/hms.test.ts  (31 tests)   ← رحلة مريض + تنويم + صلاحيات + RLS + تدقيق + FHIR
  ✓ test/unit.test.ts (8 tests)    ← تشفير/TOTP/سلسلة التدقيق
  Test Files  2 passed (2)
-      Tests  34 passed (34)
+      Tests  39 passed (39)
 ```
 
 التفاصيل الكاملة لكل نوع من الأنواع العشرة المطلوبة في `docs/TEST_PLAN.md`. باختصار:
@@ -94,6 +94,7 @@ $ npm test
 | وحدات/منطق أعمال | ✅ 8 اختبارات |
 | تكامل API/DB/رحلة المريض | ✅ 11 اختبار رحلة + تحقق الاستجابة والقيود |
 | صلاحيات/RLS/منع التجاوز | ✅ 8 اختبارات (RBAC, ABAC, break-glass, CSRF, عزل المنشآت, البوابة) |
+| التنويم والأسرّة | ✅ 5 اختبارات (تنويم، سرير مشغول، نقل، خروج واحتساب، حراسة حالات السرير) |
 | تدقيق مقاوم للعبث | ✅ تحقق السلسلة + رفض UPDATE/DELETE على السجلات المعتمدة |
 | أمن/تبعيات/اختراق | ⚠️ مغطى جزئيًا؛ **لا SAST/DAST/pen-test** |
 | أداء/تحمل · E2E · UAT · تجربة استعادة | ❌ **لم تُنفذ** |

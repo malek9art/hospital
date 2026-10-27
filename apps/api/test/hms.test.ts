@@ -61,6 +61,7 @@ beforeAll(async () => {
 
   agents.reception = await login('reception@demo.hms', 'Reception#Demo2026', 'reception');
   agents.doctor = await login('dr.ahmed@demo.hms', 'Doctor#Demo2026', 'doctor');
+  agents.nurse = await login('nurse@demo.hms', 'Nurse#Demo2026', 'nurse');
   agents.lab1 = await login('lab@demo.hms', 'Lab#Demo2026', 'lab1');
   agents.lab2 = await login('lab2@demo.hms', 'Lab#Demo2026', 'lab2');
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
@@ -338,6 +339,109 @@ describe('patient journey end-to-end', () => {
     expect(detail.payments.length).toBe(1);
     expect(Number(detail.invoice.paid_amount)).toBe(100);
     expect(detail.invoice.status).toBe('partially_paid');
+  });
+});
+
+describe('inpatient admissions and beds', () => {
+  it('admits a patient with a bed, and refuses an occupied bed', async () => {
+    const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
+    const free = beds.beds.find((b: any) => b.bed_status === 'available');
+    expect(free).toBeTruthy();
+    state.bedId = free.id;
+    const admission = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/inpatient/admissions', {
+        patientId: patient2.id,
+        bedId: free.id,
+        departmentId: state.departmentId,
+        reason: 'مراقبة ارتفاع ضغط غير مستقر',
+      }),
+      201,
+      'admit',
+    );
+    state.admissionId = admission.id;
+
+    const bedsAfter = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds after');
+    expect(bedsAfter.beds.find((b: any) => b.id === free.id).bed_status).toBe('occupied');
+
+    const patient3Id = (await expectStatus(await call(agents.reception, 'GET', '/api/patients?limit=100'), 200, 'patients')).items.find((p: any) => p.mrn === 'MRN-0003').id;
+    const clash = await call(agents.doctor, 'POST', '/api/inpatient/admissions', {
+      patientId: patient3Id,
+      bedId: free.id,
+      departmentId: state.departmentId,
+      reason: 'محاولة استخدام سرير مشغول',
+    });
+    expect(clash.statusCode).toBe(409);
+
+    const duplicate = await call(agents.doctor, 'POST', '/api/inpatient/admissions', {
+      patientId: patient2.id,
+      departmentId: state.departmentId,
+      reason: 'محاولة تنويم مكرر',
+    });
+    expect(duplicate.statusCode).toBe(409);
+  });
+
+  it('denies non-clinical roles the ability to admit', async () => {
+    const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
+    const another = beds.beds.find((b: any) => b.bed_status === 'available');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/inpatient/admissions',
+      cookies: agents.reception.cookies,
+      headers: { 'x-csrf-token': agents.reception.csrf },
+      payload: { patientId: patient2.id, bedId: another.id, departmentId: state.departmentId, reason: 'بدون صلاحية سريرية' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('transfers the patient to another bed and frees the previous bed for cleaning', async () => {
+    const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
+    const target = beds.beds.find((b: any) => b.bed_status === 'available');
+    await expectStatus(
+      await call(agents.nurse, 'POST', `/api/inpatient/admissions/${state.admissionId}/transfer`, { toBedId: target.id, reason: 'الحاجة لمراقبة أقرب' }),
+      200,
+      'transfer',
+    );
+    const after = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds after transfer');
+    expect(after.beds.find((b: any) => b.id === target.id).bed_status).toBe('occupied');
+    expect(after.beds.find((b: any) => b.id === state.bedId).bed_status).toBe('cleaning');
+    state.bedId = target.id;
+  });
+
+  it('discharges with a summary, charges bed days, and creates a discharge note', async () => {
+    const result = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/inpatient/admissions/${state.admissionId}/discharge`, {
+        dischargeType: 'home',
+        summary: 'استقرت قراءات الضغط بعد تعديل العلاج، مع تعليمات المتابعة بعد أسبوع في العيادة.',
+      }),
+      200,
+      'discharge',
+    );
+    expect(result.bedDays).toBeGreaterThanOrEqual(1);
+    expect(result.bedCharge).toBe(result.bedDays * 400);
+
+    const detail = await expectStatus(await call(agents.doctor, 'GET', `/api/inpatient/admissions/${state.admissionId}`), 200, 'admission detail');
+    expect(detail.admission.status).toBe('discharged');
+    expect(detail.transfers.length).toBe(1);
+
+    const chart = await expectStatus(await call(agents.doctor, 'GET', `/api/patients/${patient2.id}`), 200, 'chart after discharge');
+    expect(chart.notes.some((n: any) => n.note_type === 'discharge')).toBe(true);
+
+    const repeat = await call(agents.doctor, 'POST', `/api/inpatient/admissions/${state.admissionId}/discharge`, {
+      dischargeType: 'home',
+      summary: 'محاولة خروج ثانية يجب أن تُرفض لأن التنويم منتهٍ بالفعل.',
+    });
+    expect(repeat.statusCode).toBe(409);
+  });
+
+  it('requires documentation and keeps bed state transitions guarded', async () => {
+    const beds = await expectStatus(await call(agents.nurse, 'GET', '/api/inpatient/beds'), 200, 'beds');
+    const cleaning = beds.beds.find((b: any) => b.bed_status === 'cleaning');
+    await expectStatus(await call(agents.nurse, 'PATCH', `/api/inpatient/beds/${cleaning.id}/status`, { status: 'available' }), 200, 'mark clean');
+    const occupied = beds.beds.find((b: any) => b.bed_status === 'occupied');
+    if (occupied) {
+      const res = await call(agents.nurse, 'PATCH', `/api/inpatient/beds/${occupied.id}/status`, { status: 'available' });
+      expect(res.statusCode).toBe(409);
+    }
   });
 });
 
