@@ -9,6 +9,7 @@
     "setup": "npm install && npm run db:reset && npm run build",
     "dev": "npm -w apps/web run build && npm -w apps/api run dev",
     "build": "npm -w apps/web run build && npm -w apps/api run build",
+    "build:vercel": "npm -w apps/web run build && node scripts/vercel-build.mjs",
     "start": "npm -w apps/api run start",
     "db:migrate": "npm -w apps/api run db:migrate",
     "db:seed": "npm -w apps/api run db:seed",

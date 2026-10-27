@@ -799,6 +799,20 @@ const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'portal', label: 'بوابة المريض', perms: ['portal.self'] },
 ];
 
+function EphemeralBanner() {
+  const [mode, setMode] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/health').then((r) => r.json()).then((h) => setMode(h?.persistence ?? null)).catch(() => setMode(null));
+  }, []);
+  if (mode !== 'ephemeral') return null;
+  return (
+    <div className="bg-amber-100 text-amber-900 text-[11px] sm:text-xs px-4 py-1.5 text-center border-b border-amber-200">
+      نسخة استعراض على Vercel: قاعدة البيانات مؤقتة داخل الدالة وتُعاد تهيئتها عند إعادة تشغيلها.
+      للحفظ الفعلي شغّل نسخة الخادم أو اربط Postgres عبر <span className="font-mono">DATABASE_URL</span>.
+    </div>
+  );
+}
+
 export default function App() {
   const [auth, setAuth] = useState<Me | null>(null);
   const [page, setPage] = useState<PageKey>('dashboard');
@@ -814,10 +828,11 @@ export default function App() {
   }
   async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ } resetCsrf(); setAuth(null); }
   if (loading) return <div className="p-10 text-center text-slate-500">جارٍ التحميل…</div>;
-  if (!auth) return <LoginPage onLogin={(m) => { setAuth(m); pick(m); }} notice={notice} />;
+  if (!auth) return <><EphemeralBanner /><LoginPage onLogin={(m) => { setAuth(m); pick(m); }} notice={notice} /></>;
   const allowed = NAV.filter((n) => n.perms.some((p) => has(auth, p)));
   return (
     <div className="min-h-screen flex flex-col">
+      <EphemeralBanner />
       <header className="bg-white border-b sticky top-0 z-10">
         <div className="px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2"><div className="w-9 h-9 rounded-lg bg-brand-700 text-white grid place-items-center font-bold">H</div>

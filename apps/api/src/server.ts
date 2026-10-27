@@ -99,7 +99,10 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
         } catch {
           originHost = '';
         }
-        if (!host || originHost !== host) {
+        // Behind a proxy/CDN the public hostname arrives in x-forwarded-host.
+        const forwarded = req.headers['x-forwarded-host'];
+        const forwardedHost = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : '';
+        if (!host || (originHost !== host && originHost !== forwardedHost)) {
           throw new AppError(403, 'origin_rejected', 'مصدر الطلب غير موثوق');
         }
       }
@@ -179,7 +182,16 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   });
 
   // ---- Health -------------------------------------------------------------------
-  app.get('/api/health', async () => ({ ok: true, mode: cfg.DB_MODE, time: new Date().toISOString() }));
+  app.get('/api/health', async () => {
+    // PGlite inside a serverless function lives in the ephemeral /tmp filesystem.
+    const ephemeral = cfg.DB_MODE === 'pglite' && (process.env.VERCEL === '1' || cfg.PGLITE_DIR.startsWith('/tmp'));
+    return {
+      ok: true,
+      mode: cfg.DB_MODE,
+      persistence: ephemeral ? 'ephemeral' : 'durable',
+      time: new Date().toISOString(),
+    };
+  });
 
   // ---- Routes -------------------------------------------------------------------
   await app.register(authRoutes);

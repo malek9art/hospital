@@ -123,13 +123,57 @@ class PgDb implements Db {
 
 let instance: Db | null = null;
 
+/**
+ * Serverless bundlers copy the package files but rewrite `import.meta.url`, so
+ * PGlite cannot find pglite.wasm / initdb.wasm / pglite.data on its own. Locate
+ * them explicitly and hand them to PGlite; fall back to its default resolution
+ * (normal Node installs) when they are not found.
+ */
+function toBytes(buf: Buffer): Uint8Array<ArrayBuffer> {
+  // Copy into a plain ArrayBuffer-backed view so WebAssembly/Blob APIs accept it.
+  const out = new Uint8Array(buf.byteLength);
+  out.set(buf);
+  return out as Uint8Array<ArrayBuffer>;
+}
+
+function resolvePgliteAssets(): { wasm: Uint8Array<ArrayBuffer>; initdb: Uint8Array<ArrayBuffer>; data: Uint8Array<ArrayBuffer> } | null {
+  const candidates: string[] = [];
+  if (process.env.PGLITE_DIST_DIR) candidates.push(process.env.PGLITE_DIST_DIR);
+  try {
+    candidates.push(path.dirname(require.resolve('@electric-sql/pglite')));
+  } catch {
+    /* package exports may block require.resolve; ignore */
+  }
+  candidates.push(path.join(process.cwd(), 'node_modules/@electric-sql/pglite/dist'));
+  candidates.push(path.resolve(__dirname, '../../../node_modules/@electric-sql/pglite/dist'));
+  for (const dir of candidates) {
+    const files = ['pglite.wasm', 'initdb.wasm', 'pglite.data'].map((f) => path.join(dir, f));
+    if (files.every((f) => fs.existsSync(f))) {
+      return {
+        wasm: toBytes(fs.readFileSync(files[0])),
+        initdb: toBytes(fs.readFileSync(files[1])),
+        data: toBytes(fs.readFileSync(files[2])),
+      };
+    }
+  }
+  return null;
+}
+
 export async function getDb(): Promise<Db> {
   if (instance) return instance;
   const cfg = config();
   if (cfg.DB_MODE === 'pglite') {
     const { PGlite } = await import('@electric-sql/pglite');
     fs.mkdirSync(cfg.PGLITE_DIR, { recursive: true });
-    const db = await PGlite.create(cfg.PGLITE_DIR);
+    const assets = resolvePgliteAssets();
+    const db = assets
+      ? await PGlite.create({
+          dataDir: cfg.PGLITE_DIR,
+          pgliteWasmModule: new WebAssembly.Module(assets.wasm),
+          initdbWasmModule: new WebAssembly.Module(assets.initdb),
+          fsBundle: new Blob([assets.data]),
+        })
+      : await PGlite.create(cfg.PGLITE_DIR);
     instance = new PgliteDb(db);
   } else {
     const pg = await import('pg');
@@ -142,6 +186,19 @@ export async function getDb(): Promise<Db> {
 export async function closeDb() {
   if (instance) await instance.close();
   instance = null;
+}
+
+function resolveMigrationsDir(): string {
+  const candidates = [
+    process.env.MIGRATIONS_DIR,
+    path.resolve(__dirname, '../../../../db/migrations'),
+    path.join(process.cwd(), 'db/migrations'),
+    path.join(process.cwd(), '..', 'db/migrations'),
+  ].filter((x): x is string => Boolean(x));
+  for (const dir of candidates) {
+    if (fs.existsSync(dir) && fs.readdirSync(dir).some((f) => f.endsWith('.sql'))) return dir;
+  }
+  throw new Error(`Migrations directory not found (looked in: ${candidates.join(', ')})`);
 }
 
 export async function runMigrations(db: Db) {
@@ -160,7 +217,7 @@ export async function runMigrations(db: Db) {
     }
   }
 
-  const dir = path.resolve(__dirname, '../../../../db/migrations');
+  const dir = resolveMigrationsDir();
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
   const existing = await db.query<{ filename: string; checksum: string }>('SELECT filename, checksum FROM schema_migrations');
   const applied = new Map(existing.rows.map((r) => [r.filename, r.checksum]));

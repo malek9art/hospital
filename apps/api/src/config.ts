@@ -24,6 +24,8 @@ const EnvSchema = z.object({
   AUTH_RATE_LIMIT_MAX: z.coerce.number().default(10),
   WEB_DIR: z.string().default(path.resolve(__dirname, '../../web/dist')),
   TRUST_PROXY: z.string().default('false').transform((v) => v === 'true'),
+  // Serverless only: migrate + seed automatically when the database is empty.
+  AUTO_BOOTSTRAP: z.string().default('false').transform((v) => v === 'true'),
 });
 
 export type AppConfig = z.infer<typeof EnvSchema> & {
