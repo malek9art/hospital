@@ -14,7 +14,7 @@ export const MODULE_STATUS = [
   { key: 'inpatient', ar: 'التنويم وإدارة الأسرة', status: 'implemented', note: 'تنويم بأمر طبيب، تخصيص سرير، نقل، خروج بملخص، احتساب أيام الإقامة، حالات الأسرّة' },
   { key: 'emergency', ar: 'الطوارئ والفرز', status: 'implemented', note: 'لوحة فرز ESI 1-5، وصول مجهول الهوية مع مطابقة لاحقة، إعادة فرز مسببة، تحويل للتنويم أو خروج/تحويل بملخص' },
   { key: 'nursing', ar: 'التمريض', status: 'partial', note: 'علامات حيوية، ملاحظات، وإدارة حالة الأسرّة؛ خطط رعاية وتسليم مناوبات غير مكتملة' },
-  { key: 'radiology', ar: 'الأشعة وPACS', status: 'not_implemented', note: 'لا يوجد تكامل DICOM/PACS فعلي' },
+  { key: 'radiology', ar: 'الأشعة والتقارير', status: 'partial', note: 'طلب وتنفيذ وتقرير معتمد ونتائج حرجة — لا يوجد تكامل DICOM/PACS فعلي بعد' },
   { key: 'surgery', ar: 'العمليات والتخدير', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
   { key: 'icu', ar: 'العناية المركزة', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
   { key: 'bloodbank', ar: 'بنك الدم', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
@@ -30,7 +30,7 @@ export const MODULE_STATUS = [
   { key: 'portal', ar: 'بوابة المرضى', status: 'partial', note: 'اطلاع على المواعيد والنتائج المعتمدة والفواتير؛ لا حجز/دفع إلكتروني' },
   { key: 'integrations', ar: 'التكامل والإشعارات', status: 'partial', note: 'FHIR R4 جزئي، outbox إشعارات بدون مزود بريد/SMS' },
   { key: 'analytics', ar: 'التحليلات', status: 'implemented', note: 'مؤشرات تشغيلية حقيقية من قاعدة البيانات' },
-  { key: 'radiology_orders', ar: 'طلبات الأشعة', status: 'not_implemented', note: 'غير منفذة' },
+  { key: 'radiology_orders', ar: 'طلبات الأشعة', status: 'implemented', note: 'طلب، تنفيذ، تقرير اعتماد، ورسوم' },
 ] as const;
 
 export async function metaRoutes(app: FastifyInstance) {

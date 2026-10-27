@@ -40,6 +40,12 @@ const PERMISSIONS: [string, string, string][] = [
   ['inpatient.discharge', 'inpatient', 'خروج المرضى'],
   ['inpatient.bed.manage', 'inpatient', 'إدارة الأسرة'],
   ['emergency.triage', 'emergency', 'فرز وتشغيل الطوارئ'],
+  ['radiology.order', 'radiology', 'طلب أشعة'],
+  ['radiology.read', 'radiology', 'عرض طلبات وتقارير الأشعة'],
+  ['radiology.perform', 'radiology', 'تنفيذ التصوير'],
+  ['radiology.report', 'radiology', 'كتابة تقرير الأشعة'],
+  ['radiology.verify', 'radiology', 'اعتماد تقرير الأشعة'],
+  ['radiology.critical.ack', 'radiology', 'استلام النتائج الحرجة'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -57,12 +63,14 @@ const ALL = PERMISSIONS.map((p) => p[0]);
 const ROLE_PERMS: Record<string, string[]> = {
   system_admin: ['admin.users.read', 'admin.users.manage', 'admin.roles.manage', 'admin.facility.manage', 'admin.sessions.manage', 'admin.settings.manage', 'audit.read', 'report.read'],
   hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read'],
-  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage'],
-  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage'],
-  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage'],
+  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage'],
+  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack'],
+  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read'],
   receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record'],
   records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export'],
   lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read'],
+  radiology_tech: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.perform'],
+  radiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.report', 'radiology.verify'],
   pharmacist: ['patient.read', 'patient.chart.clinical', 'pharmacy.prescription.read', 'pharmacy.dispense', 'pharmacy.stock.manage', 'billing.invoice.read'],
   accountant: ['patient.read', 'patient.chart.administrative', 'billing.invoice.read', 'billing.invoice.create', 'billing.payment.record', 'billing.invoice.void', 'billing.discount.apply', 'insurance.claim.manage', 'report.read', 'report.export', 'report.finance'],
   auditor: ['audit.read', 'report.read', 'report.export', 'report.finance', 'admin.users.read'],
@@ -78,6 +86,8 @@ const ROLES: [string, string, string][] = [
   ['receptionist', 'استقبال', 'Receptionist'],
   ['records_officer', 'السجلات الطبية', 'Medical records'],
   ['lab_tech', 'فني مختبر', 'Lab technician'],
+  ['radiology_tech', 'فني أشعة', 'Radiology technologist'],
+  ['radiologist', 'استشاري أشعة', 'Radiologist'],
   ['pharmacist', 'صيدلي', 'Pharmacist'],
   ['accountant', 'محاسب', 'Accountant'],
   ['auditor', 'مدقق', 'Auditor'],
@@ -109,6 +119,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['PHR', 'الصيدلية', 'Pharmacy', 'pharmacy'],
     ['ADM', 'الإدارة', 'Administration', 'administration'],
     ['INP', 'التنويم', 'Inpatient', 'inpatient'],
+    ['RAD', 'الأشعة', 'Radiology', 'radiology'],
   ];
   const deptIds: Record<string, string> = {};
   for (const [code, ar, en, type] of deptDefs) {
@@ -137,6 +148,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     reception: await hashPassword('Reception#Demo2026'),
     records: await hashPassword('Records#Demo2026'),
     lab: await hashPassword('Lab#Demo2026'),
+    radiology: await hashPassword('Radiology#Demo2026'),
     pharma: await hashPassword('Pharma#Demo2026'),
     account: await hashPassword('Account#Demo2026'),
     auditor: await hashPassword('Auditor#Demo2026'),
@@ -153,6 +165,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['records@demo.hms', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', 'records_officer', password.records, 'ADM'],
     ['lab@demo.hms', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', 'lab_tech', password.lab, 'LAB'],
     ['lab2@demo.hms', 'هند الغامدي', 'Hind Alghamdi', 'أخصائية مختبر', 'lab_tech', password.lab, 'LAB'],
+    ['radiology@demo.hms', 'طلال البلوي', 'Talal Albalawi', 'فني أشعة', 'radiology_tech', password.radiology, 'RAD'],
+    ['radiologist@demo.hms', 'د. منى الشريف', 'Dr. Mona Alsharif', 'استشارية أشعة', 'radiologist', password.radiology, 'RAD'],
     ['pharmacist@demo.hms', 'ريم المالكي', 'Reem Almalki', 'صيدلانية', 'pharmacist', password.pharma, 'PHR'],
     ['accountant@demo.hms', 'سلمان القحطاني', 'Salman Alqahtani', 'محاسب', 'accountant', password.account, 'ADM'],
     ['auditor@demo.hms', 'لمى الحمد', 'Lama Alhamd', 'مدققة داخلية', 'auditor', password.auditor, 'ADM'],
@@ -233,6 +247,10 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.consultation', '{"amount":150}') ON CONFLICT DO NOTHING`, [facilityId]);
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.bed_day', '{"amount":400}') ON CONFLICT DO NOTHING`, [facilityId]);
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.er_visit', '{"amount":200}') ON CONFLICT DO NOTHING`, [facilityId]);
+    for (const [modality, amount] of Object.entries({ xray: 150, ct: 650, mri: 1100, us: 300, mammography: 400, fluoroscopy: 500 })) {
+      await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [facilityId, `pricing.imaging_${modality}`, JSON.stringify({ amount })]);
+    }
   }
 
   const drugs: [string, string, string, string, string, number, boolean][] = [

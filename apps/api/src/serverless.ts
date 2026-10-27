@@ -42,8 +42,25 @@ export function getApp(): Promise<FastifyInstance> {
 }
 
 export async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const app = await getApp();
-  app.server.emit('request', req, res);
+  try {
+    const app = await getApp();
+    app.server.emit('request', req, res);
+  } catch (err) {
+    // Never turn a bootstrap failure into an opaque platform 500: the reason is
+    // logged server-side and a short, non-sensitive code is returned to clients.
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.error('[serverless] bootstrap failed:', err);
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.end(
+        JSON.stringify({
+          error: { code: 'bootstrap_failed', message: 'تعذر تهيئة الخدمة', details: message },
+        }),
+      );
+    }
+  }
 }
 
 export default handler;

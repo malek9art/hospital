@@ -7,7 +7,7 @@
     "api/index.ts": {
       "maxDuration": 60,
       "memory": 2048,
-      "includeFiles": "{db/migrations/**,node_modules/@electric-sql/pglite/dist/{pglite.wasm,initdb.wasm,pglite.data}}"
+      "includeFiles": "{db/migrations/**,node_modules/@electric-sql/pglite/dist/pglite.wasm,node_modules/@electric-sql/pglite/dist/initdb.wasm,node_modules/@electric-sql/pglite/dist/pglite.data,node_modules/@node-rs/**}"
     }
   },
   "rewrites": [
