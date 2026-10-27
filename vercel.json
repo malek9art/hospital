@@ -7,30 +7,46 @@
     "api/index.ts": {
       "maxDuration": 60,
       "memory": 2048,
-      "includeFiles": [
-        "db/migrations/**",
-        "node_modules/@electric-sql/pglite/dist/pglite.wasm",
-        "node_modules/@electric-sql/pglite/dist/initdb.wasm",
-        "node_modules/@electric-sql/pglite/dist/pglite.data"
-      ]
+      "includeFiles": "{db/migrations/**,node_modules/@electric-sql/pglite/dist/{pglite.wasm,initdb.wasm,pglite.data}}"
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
       "source": "/assets/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
     },
     {
       "source": "/index.html",
-      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
     },
     {
       "source": "/api/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "no-store, private" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, private"
+        }
+      ]
     }
   ]
 }
