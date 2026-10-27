@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'inpatient' | 'lab' | 'pharmacy' | 'billing' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'lab' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -437,6 +437,199 @@ function Inpatient({ m }: { m: Me }) {
   );
 }
 
+
+// --------------------------------------------------------------- Emergency ---
+const LEVELS: Record<number, { ar: string; cls: string }> = {
+  1: { ar: '١ إنعاش', cls: 'bg-rose-600 text-white' },
+  2: { ar: '٢ حرج', cls: 'bg-orange-500 text-white' },
+  3: { ar: '٣ عاجل', cls: 'bg-amber-400 text-slate-900' },
+  4: { ar: '٤ أقل إلحاحًا', cls: 'bg-sky-200 text-slate-800' },
+  5: { ar: '٥ غير عاجل', cls: 'bg-slate-200 text-slate-700' },
+};
+
+function Emergency({ m }: { m: Me }) {
+  const [board, setBoard] = useState<any>(null); const [patients, setPatients] = useState<any[]>([]);
+  const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+  const [form, setForm] = useState({ patientId: '', unidentified: false, sex: 'male', age: '', chiefComplaint: '', level: '3', notes: '', hr: '', sbp: '', spo2: '', temp: '' });
+  const [action, setAction] = useState<{ kind: 'retriage' | 'discharge' | 'admit'; encounterId: string; level?: string; reason?: string; summary?: string; bedId?: string } | null>(null);
+  const [freeBeds, setFreeBeds] = useState<any[]>([]);
+
+  async function load() {
+    try {
+      const [b, p] = await Promise.all([api<any>('/api/emergency/board'), api<any>('/api/patients?limit=100')]);
+      setBoard(b); setPatients(p.items);
+      if (has(m, 'inpatient.admit')) {
+        const beds = await api<any>('/api/inpatient/beds');
+        setFreeBeds(beds.beds.filter((x: any) => x.bed_status === 'available'));
+      }
+    } catch (e: any) { setErr(e.message); }
+  }
+  useEffect(() => { load(); }, []);
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); setAction(null); await load(); } catch (e: any) { setErr(e.message); }
+  }
+  async function register(e: React.FormEvent) {
+    e.preventDefault();
+    const vitals: any = {};
+    if (form.hr) vitals.heartRate = Number(form.hr);
+    if (form.sbp) vitals.systolicBp = Number(form.sbp);
+    if (form.spo2) vitals.spo2 = Number(form.spo2);
+    if (form.temp) vitals.temperatureC = Number(form.temp);
+    const payload: any = { chiefComplaint: form.chiefComplaint, level: Number(form.level), notes: form.notes || undefined, vitals: Object.keys(vitals).length ? vitals : undefined };
+    if (form.unidentified) payload.unidentified = { sex: form.sex, estimatedAge: form.age ? Number(form.age) : undefined };
+    else payload.patientId = form.patientId;
+    await act(async () => {
+      const r: any = await api('/api/emergency/arrivals', { method: 'POST', body: JSON.stringify(payload) });
+      if (r.temporaryIdentity) setOk('تم تسجيل وصول مجهول الهوية برقم مؤقت — يمكن مطابقته لاحقًا من السجلات الطبية');
+      setForm({ ...form, patientId: '', chiefComplaint: '', notes: '', hr: '', sbp: '', spo2: '', temp: '' });
+    }, 'تم تسجيل الوصول والفرز');
+  }
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+      {board && <div className="grid grid-cols-5 gap-2">
+        {[1, 2, 3, 4, 5].map((l) => (
+          <div key={l} className={`rounded-lg p-2 text-center ${LEVELS[l].cls}`}>
+            <p className="text-xs">{LEVELS[l].ar}</p>
+            <p className="text-xl font-bold">{board.byLevel[l] ?? 0}</p>
+          </div>
+        ))}
+      </div>}
+      <Card title="تسجيل وصول للطوارئ">
+        <form onSubmit={register} className="grid md:grid-cols-4 gap-2">
+          <div className="md:col-span-2">
+            <label className="label">المريض</label>
+            <div className="flex gap-2">
+              <select className="input" disabled={form.unidentified} value={form.patientId} onChange={(e) => setForm({ ...form, patientId: e.target.value })}>
+                <option value="">—</option>{patients.map((p: any) => <option key={p.id} value={p.id}>{p.fullNameAr} · {p.mrn}</option>)}
+              </select>
+              <label className="flex items-center gap-1 text-xs whitespace-nowrap"><input type="checkbox" checked={form.unidentified} onChange={(e) => setForm({ ...form, unidentified: e.target.checked, patientId: '' })} /> مجهول الهوية</label>
+            </div>
+          </div>
+          {form.unidentified && <>
+            <div><label className="label">الجنس</label><select className="input" value={form.sex} onChange={(e) => setForm({ ...form, sex: e.target.value })}><option value="male">ذكر</option><option value="female">أنثى</option><option value="other">غير محدد</option></select></div>
+            <div><label className="label">العمر التقريبي</label><input className="input" type="number" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} /></div>
+          </>}
+          <div className="md:col-span-2"><label className="label">الشكوى الرئيسية *</label><input required className="input" value={form.chiefComplaint} onChange={(e) => setForm({ ...form, chiefComplaint: e.target.value })} /></div>
+          <div><label className="label">مستوى الفرز *</label>
+            <select className="input" value={form.level} onChange={(e) => setForm({ ...form, level: e.target.value })}>
+              {[1, 2, 3, 4, 5].map((l) => <option key={l} value={l}>{LEVELS[l].ar}</option>)}
+            </select></div>
+          <div className="grid grid-cols-4 gap-1 md:col-span-2">
+            <div><label className="label">نبض</label><input className="input" type="number" value={form.hr} onChange={(e) => setForm({ ...form, hr: e.target.value })} /></div>
+            <div><label className="label">انقباضي</label><input className="input" type="number" value={form.sbp} onChange={(e) => setForm({ ...form, sbp: e.target.value })} /></div>
+            <div><label className="label">SpO₂</label><input className="input" type="number" value={form.spo2} onChange={(e) => setForm({ ...form, spo2: e.target.value })} /></div>
+            <div><label className="label">حرارة</label><input className="input" type="number" step="0.1" value={form.temp} onChange={(e) => setForm({ ...form, temp: e.target.value })} /></div>
+          </div>
+          <div className="flex items-end"><button className="btn-primary" type="submit" disabled={!form.chiefComplaint || (!form.patientId && !form.unidentified)}>تسجيل وفرز</button></div>
+        </form>
+        <p className="text-xs text-slate-500 mt-1">الأولوية 1–2 تُنشئ تنبيهًا فوريًا. الترتيب في اللوحة حسب الخطورة ثم وقت الوصول، لا حسب ترتيب الوصول.</p>
+      </Card>
+      <Card title="لوحة الطوارئ">
+        <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr>
+          <th className="th">الفرز</th><th className="th">المريض</th><th className="th">الشكوى</th><th className="th">الانتظار</th><th className="th">آخر علامات</th><th className="th">الحالة</th><th className="th">إجراءات</th></tr></thead>
+          <tbody>{(board?.items ?? []).map((i: any) => (
+            <tr key={i.id} className={i.level <= 2 ? 'bg-rose-50/60' : ''}>
+              <td className="td"><span className={`badge ${LEVELS[i.level].cls}`}>{LEVELS[i.level].ar}</span>{i.previous_level && <span className="block text-[10px] text-slate-500">سابقًا {i.previous_level}</span>}</td>
+              <td className="td">{i.patient_name}<span className="block text-xs text-slate-400">{i.mrn}{i.identity_status === 'unverified_temporary' && ' · مجهول الهوية'}</span></td>
+              <td className="td max-w-[220px] truncate">{i.chief_complaint}</td>
+              <td className={`td font-semibold ${i.waiting_minutes > 30 && i.level >= 3 ? 'text-rose-600' : ''}`}>{i.waiting_minutes} د</td>
+              <td className="td text-xs">{i.last_hr ? `نبض ${i.last_hr}` : '—'} {i.last_sbp ? `· ضغط ${i.last_sbp}` : ''} {i.last_spo2 ? `· SpO₂ ${i.last_spo2}` : ''}</td>
+              <td className="td"><Badge value={i.status === 'in_treatment' ? 'in_consultation' : 'open'} /></td>
+              <td className="td space-x-1 space-x-reverse whitespace-nowrap">
+                <button className="btn-ghost text-xs" onClick={() => setAction({ kind: 'retriage', encounterId: i.encounter_id, level: String(i.level), reason: '' })}>إعادة فرز</button>
+                <button className="btn-ghost text-xs" onClick={() => setAction({ kind: 'discharge', encounterId: i.encounter_id, summary: '' })}>خروج</button>
+                {has(m, 'inpatient.admit') && <button className="btn-primary text-xs" onClick={() => setAction({ kind: 'admit', encounterId: i.encounter_id })}>تنويم</button>}
+              </td></tr>))}
+            {(board?.items ?? []).length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا حالات نشطة.</td></tr>}
+          </tbody></table></div>
+      </Card>
+      {action && <Card title={action.kind === 'retriage' ? 'إعادة فرز' : action.kind === 'discharge' ? 'خروج من الطوارئ' : 'تنويم من الطوارئ'}
+        action={<button className="btn-ghost text-xs" onClick={() => setAction(null)}>إغلاق</button>}>
+        {action.kind === 'retriage' && <>
+          <select className="input mb-2" value={action.level} onChange={(e) => setAction({ ...action, level: e.target.value })}>
+            {[1, 2, 3, 4, 5].map((l) => <option key={l} value={l}>{LEVELS[l].ar}</option>)}
+          </select>
+          <input className="input mb-2" placeholder="سبب تغيير المستوى (إلزامي)" value={action.reason} onChange={(e) => setAction({ ...action, reason: e.target.value })} />
+          <button className="btn-primary" disabled={(action.reason ?? '').length < 5}
+            onClick={() => act(() => api(`/api/emergency/visits/${action.encounterId}/retriage`, { method: 'POST', body: JSON.stringify({ level: Number(action.level), reason: action.reason }) }), 'تم تحديث مستوى الفرز')}>تأكيد</button>
+        </>}
+        {action.kind === 'discharge' && <>
+          <textarea className="input mb-2" rows={4} placeholder="ملخص الخروج وتعليمات المتابعة (10 أحرف على الأقل)" value={action.summary} onChange={(e) => setAction({ ...action, summary: e.target.value })} />
+          <button className="btn-primary" disabled={(action.summary ?? '').length < 10}
+            onClick={() => act(() => api(`/api/emergency/visits/${action.encounterId}/disposition`, { method: 'POST', body: JSON.stringify({ decision: 'discharge', dischargeType: 'home', summary: action.summary }) }), 'تم إنهاء زيارة الطوارئ وإضافة رسم الزيارة')}>تأكيد الخروج</button>
+        </>}
+        {action.kind === 'admit' && <>
+          <select className="input mb-2" value={action.bedId ?? ''} onChange={(e) => setAction({ ...action, bedId: e.target.value })}>
+            <option value="">بدون سرير (بانتظار سرير)</option>
+            {freeBeds.map((b: any) => <option key={b.id} value={b.id}>{b.ward_name} · {b.room_no}/{b.bed_no}</option>)}
+          </select>
+          <button className="btn-primary"
+            onClick={() => act(() => api(`/api/emergency/visits/${action.encounterId}/disposition`, { method: 'POST', body: JSON.stringify({ decision: 'admit', bedId: action.bedId || undefined }) }), 'تم تحويل المريض إلى التنويم على نفس الزيارة')}>تأكيد التنويم</button>
+        </>}
+      </Card>}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------- Reports ---
+function Reports({ m }: { m: Me }) {
+  const [reports, setReports] = useState<any[]>([]); const [key, setKey] = useState('visits');
+  const [data, setData] = useState<any>(null); const [range, setRange] = useState({ from: '', to: '' });
+  const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+
+  useEffect(() => { api<any>('/api/reports').then((r) => { setReports(r.reports); }).catch((e) => setErr(e.message)); }, []);
+  useEffect(() => { load(); }, [key]);
+  async function load() {
+    setErr(null); setOk(null);
+    try {
+      const qs = new URLSearchParams();
+      if (range.from) qs.set('from', range.from);
+      if (range.to) qs.set('to', range.to);
+      setData(await api(`/api/reports/${key}?${qs.toString()}`));
+    } catch (e: any) { setErr(e.message); setData(null); }
+  }
+  async function download() {
+    try {
+      const qs = new URLSearchParams({ format: 'csv' });
+      if (range.from) qs.set('from', range.from);
+      if (range.to) qs.set('to', range.to);
+      const res = await fetch(`/api/reports/${key}?${qs.toString()}`, { credentials: 'same-origin' });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error?.message ?? 'فشل التصدير'); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `hms-${key}.csv`; a.click();
+      URL.revokeObjectURL(url);
+      setOk('تم تصدير CSV وتسجيل العملية في سجل التدقيق');
+    } catch (e: any) { setErr(e.message); }
+  }
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+      <Card title="التقارير">
+        <div className="flex flex-wrap gap-2 items-end">
+          <div><label className="label">التقرير</label>
+            <select className="input" value={key} onChange={(e) => setKey(e.target.value)}>
+              {reports.map((r: any) => <option key={r.key} value={r.key}>{r.ar}</option>)}
+            </select></div>
+          <div><label className="label">من</label><input type="date" className="input" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} /></div>
+          <div><label className="label">إلى</label><input type="date" className="input" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} /></div>
+          <button className="btn-ghost" onClick={load}>تحديث</button>
+          {has(m, 'report.export') && <button className="btn-primary" onClick={download}>تصدير CSV (مدقق)</button>}
+        </div>
+        {!has(m, 'report.export') && <p className="text-xs text-slate-500 mt-1">عرض فقط — لا تملك صلاحية التصدير.</p>}
+      </Card>
+      {data && <Card title={`${data.title} · ${data.total} صفًا`}>
+        <div className="overflow-x-auto max-h-[520px]"><table className="w-full text-sm"><thead className="sticky top-0 bg-white"><tr>{data.columns.map((c: any) => <th key={c.key} className="th">{c.ar}</th>)}</tr></thead>
+          <tbody>{data.rows.map((r: any, idx: number) => <tr key={idx}>{data.columns.map((c: any) => <td key={c.key} className="td whitespace-nowrap">{r[c.key] ?? '—'}</td>)}</tr>)}
+            {data.rows.length === 0 && <tr><td className="td text-slate-500" colSpan={data.columns.length}>لا بيانات في الفترة المحددة.</td></tr>}</tbody></table></div>
+      </Card>}
+    </div>
+  );
+}
+
 // -------------------------------------------------------------------- Lab ----
 function Lab({ m }: { m: Me }) {
   const [status, setStatus] = useState('all'); const [items, setItems] = useState<any[]>([]);
@@ -596,9 +789,11 @@ const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'appointments', label: 'المواعيد والاستقبال', perms: ['appointment.read'] },
   { key: 'clinic', label: 'العيادة', perms: ['clinical.encounter.read'] },
   { key: 'lab', label: 'المختبر', perms: ['lab.sample.collect'] },
+  { key: 'emergency', label: 'الطوارئ والفرز', perms: ['emergency.triage'] },
   { key: 'inpatient', label: 'التنويم والأسرّة', perms: ['inpatient.admit', 'inpatient.bed.manage'] },
   { key: 'pharmacy', label: 'الصيدلية', perms: ['pharmacy.prescription.read'] },
   { key: 'billing', label: 'الفوترة', perms: ['billing.invoice.read'] },
+  { key: 'reports', label: 'التقارير', perms: ['report.read'] },
   { key: 'audit', label: 'التدقيق', perms: ['audit.read'] },
   { key: 'modules', label: 'حالة الوحدات', perms: ['patient.read'] },
   { key: 'portal', label: 'بوابة المريض', perms: ['portal.self'] },
@@ -641,10 +836,12 @@ export default function App() {
         {page === 'patients' && <Patients m={auth} />}
         {page === 'appointments' && <Appointments m={auth} />}
         {page === 'clinic' && <Clinic m={auth} />}
+        {page === 'emergency' && <Emergency m={auth} />}
         {page === 'inpatient' && <Inpatient m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}
         {page === 'billing' && <Billing m={auth} />}
+        {page === 'reports' && <Reports m={auth} />}
         {page === 'audit' && <Audit />}
         {page === 'modules' && <Modules />}
         {page === 'portal' && <Portal />}

@@ -70,6 +70,25 @@
 
 `GET /api/billing/invoices[/:id]`, `POST /api/billing/invoices/:id/payments` (يمنع الدفع الزائد → 409)، `POST /api/billing/invoices/:id/void` (يمنع إلغاء مدفوعة)، `POST /api/billing/invoices/:id/claims` (داخلي فقط، لا إرسال)، `GET /api/billing/summary`.
 
+## الطوارئ والفرز
+
+| Method | Path | ملاحظات |
+|---|---|---|
+| GET | `/api/emergency/board` | الحالات النشطة مرتبة حسب الخطورة ثم الوصول + دقائق الانتظار + آخر علامات |
+| POST | `/api/emergency/arrivals` | مريض معروف أو `unidentified` (رقم مؤقت `ER-…`)؛ مستوى 1–5؛ علامات أولية؛ مستوى ≤2 ينشئ تنبيهًا |
+| POST | `/api/emergency/visits/:id/retriage` | `{level, reason}` — سبب إلزامي، يُسجَّل في التدقيق |
+| POST | `/api/emergency/visits/:id/status` | `in_treatment` / `observation` |
+| POST | `/api/emergency/visits/:id/disposition` | `admit` (يعيد استخدام نفس الزيارة) / `discharge` (ملخص + رسم زيارة) / `transfer` / `left_without_being_seen` |
+| POST | `/api/emergency/patients/:id/identify` | مطابقة مجهول الهوية بسجل حقيقي بعد إغلاق الزيارة + دليل موثق |
+| POST | `/api/emergency/encounters/:id/payment` | تحصيل على فاتورة الزيارة |
+
+## التقارير والتصدير
+
+`GET /api/reports` (قائمة) · `GET /api/reports/:key?from=&to=&format=json|csv` حيث key ∈ `visits|lab-results|revenue|occupancy`.
+- `format=csv` يتطلب صلاحية إضافية `report.export`، ويُسجَّل `report.export` في التدقيق مع عدد الصفوف والفترة.
+- CSV يبدأ بـ BOM (Excel عربي) وتُحايد الخلايا التي تبدأ بـ `= + - @` لمنع حقن الصيغ.
+- تقرير الإيرادات يتطلب `report.finance` (فصل الأدوار السريرية عن المالية).
+
 ## الإدارة والتدقيق
 
 `GET/POST/PATCH /api/admin/users`, `GET /api/admin/roles`, `GET/POST /api/admin/sessions[/:id/revoke]`, `GET /api/admin/facilities`, `GET /api/audit` (فلاتر), `GET /api/audit/verify` → `{ok,checked}`.

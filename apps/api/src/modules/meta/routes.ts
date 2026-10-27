@@ -12,7 +12,7 @@ export const MODULE_STATUS = [
   { key: 'billing', ar: 'الفوترة والمدفوعات', status: 'implemented', note: 'فواتير تلقائية، دفع idempotent، إلغاء مدقق' },
   { key: 'insurance', ar: 'التأمين', status: 'partial', note: 'بوليصات ومطالبات داخلية؛ لا يوجد ربط إلكتروني بجهة تأمين' },
   { key: 'inpatient', ar: 'التنويم وإدارة الأسرة', status: 'implemented', note: 'تنويم بأمر طبيب، تخصيص سرير، نقل، خروج بملخص، احتساب أيام الإقامة، حالات الأسرّة' },
-  { key: 'emergency', ar: 'الطوارئ', status: 'partial', note: 'نوع زيارة طوارئ وفرز مدعوم في البيانات؛ لوحة فرز مخصصة غير مكتملة' },
+  { key: 'emergency', ar: 'الطوارئ والفرز', status: 'implemented', note: 'لوحة فرز ESI 1-5، وصول مجهول الهوية مع مطابقة لاحقة، إعادة فرز مسببة، تحويل للتنويم أو خروج/تحويل بملخص' },
   { key: 'nursing', ar: 'التمريض', status: 'partial', note: 'علامات حيوية، ملاحظات، وإدارة حالة الأسرّة؛ خطط رعاية وتسليم مناوبات غير مكتملة' },
   { key: 'radiology', ar: 'الأشعة وPACS', status: 'not_implemented', note: 'لا يوجد تكامل DICOM/PACS فعلي' },
   { key: 'surgery', ar: 'العمليات والتخدير', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },

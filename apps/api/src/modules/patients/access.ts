@@ -25,6 +25,7 @@ interface PatientRow {
   created_at: string;
   duplicate_of_id: string | null;
   version: number;
+  identity_status: string;
 }
 
 const RELATIONSHIP_ROLES = new Set(['physician', 'nurse', 'department_manager']);

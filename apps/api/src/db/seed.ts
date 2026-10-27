@@ -39,6 +39,7 @@ const PERMISSIONS: [string, string, string][] = [
   ['inpatient.admit', 'inpatient', 'تنويم المرضى'],
   ['inpatient.discharge', 'inpatient', 'خروج المرضى'],
   ['inpatient.bed.manage', 'inpatient', 'إدارة الأسرة'],
+  ['emergency.triage', 'emergency', 'فرز وتشغيل الطوارئ'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -48,22 +49,23 @@ const PERMISSIONS: [string, string, string][] = [
   ['audit.read', 'audit', 'الاطلاع على سجل التدقيق'],
   ['report.read', 'reports', 'عرض التقارير'],
   ['report.export', 'reports', 'تصدير التقارير'],
+  ['report.finance', 'reports', 'تقارير مالية على مستوى المنشأة'],
   ['portal.self', 'portal', 'بوابة المريض'],
 ];
 
 const ALL = PERMISSIONS.map((p) => p[0]);
 const ROLE_PERMS: Record<string, string[]> = {
   system_admin: ['admin.users.read', 'admin.users.manage', 'admin.roles.manage', 'admin.facility.manage', 'admin.sessions.manage', 'admin.settings.manage', 'audit.read', 'report.read'],
-  hospital_director: ['report.read', 'report.export', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read'],
+  hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read'],
   department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage'],
-  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage'],
-  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage'],
+  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage'],
+  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage'],
   receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record'],
-  records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read'],
+  records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export'],
   lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read'],
   pharmacist: ['patient.read', 'patient.chart.clinical', 'pharmacy.prescription.read', 'pharmacy.dispense', 'pharmacy.stock.manage', 'billing.invoice.read'],
-  accountant: ['patient.read', 'patient.chart.administrative', 'billing.invoice.read', 'billing.invoice.create', 'billing.payment.record', 'billing.invoice.void', 'billing.discount.apply', 'insurance.claim.manage', 'report.read', 'report.export'],
-  auditor: ['audit.read', 'report.read', 'admin.users.read'],
+  accountant: ['patient.read', 'patient.chart.administrative', 'billing.invoice.read', 'billing.invoice.create', 'billing.payment.record', 'billing.invoice.void', 'billing.discount.apply', 'insurance.claim.manage', 'report.read', 'report.export', 'report.finance'],
+  auditor: ['audit.read', 'report.read', 'report.export', 'report.finance', 'admin.users.read'],
   patient: ['portal.self'],
 };
 
@@ -230,6 +232,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     );
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.consultation', '{"amount":150}') ON CONFLICT DO NOTHING`, [facilityId]);
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.bed_day', '{"amount":400}') ON CONFLICT DO NOTHING`, [facilityId]);
+    await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.er_visit', '{"amount":200}') ON CONFLICT DO NOTHING`, [facilityId]);
   }
 
   const drugs: [string, string, string, string, string, number, boolean][] = [
@@ -414,6 +417,31 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       `INSERT INTO payments (id, facility_id, invoice_id, amount, method, received_by, received_at)
        VALUES ($1,$2,$3,$4,'card',$5, now() - interval '10 days')`,
       [crypto.randomUUID(), facilityId, invoiceId, subtotal, accountant],
+    );
+  }
+
+  // ---------------------------------------------------------- ER demo visit --
+  {
+    const doctor = Object.entries(userIds).find(([k]) => k.endsWith(':dr.sara@demo.hms'))![1];
+    const erDept = deptIds.ER;
+    const patientId = patientIds[2];
+    const encounterId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
+         status, chief_complaint, triage_level, started_at, created_by)
+       VALUES ($1,$2,'ENC-000002',$3,'emergency',$4,$5,'open','ألم صدري حاد يمتد للذراع', 2, now() - interval '35 minutes', $5)`,
+      [encounterId, facilityId, patientId, erDept, doctor],
+    );
+    await db.query(
+      `INSERT INTO vitals (id, facility_id, patient_id, encounter_id, recorded_by, recorded_at, heart_rate,
+         systolic_bp, diastolic_bp, spo2, temperature_c)
+       VALUES ($1,$2,$3,$4,$5, now() - interval '35 minutes', 104, 148, 92, 95, 37.2)`,
+      [crypto.randomUUID(), facilityId, patientId, encounterId, doctor],
+    );
+    await db.query(
+      `INSERT INTO triage_records (id, facility_id, patient_id, encounter_id, level, chief_complaint, arrived_at, triaged_by)
+       VALUES ($1,$2,$3,$4,2,'ألم صدري حاد يمتد للذراع', now() - interval '35 minutes', $5)`,
+      [crypto.randomUUID(), facilityId, patientId, encounterId, doctor],
     );
   }
 

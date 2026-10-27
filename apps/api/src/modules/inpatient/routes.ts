@@ -5,6 +5,7 @@ import { requireAuth, requirePermission } from '../../auth/context';
 import { withTenant, withTenantAudited, nextDocumentNo } from '../../lib/tenant';
 import { conflict, forbidden, notFound } from '../../lib/errors';
 import { authorizeChartAccess, loadPatientOr404 } from '../patients/access';
+import { createAdmission, priceFor } from './service';
 import { ensureCharge } from '../billing/service';
 
 const ADMIT_ROLES = new Set(['physician', 'department_manager']);
@@ -145,74 +146,17 @@ export async function inpatientRoutes(app: FastifyInstance) {
       async (db) => {
         const patient = await loadPatientOr404(db, b.patientId);
         await authorizeChartAccess(db, auth, patient, 'clinical', { ip: req.ip, accessType: 'admit' });
-        const existing = await db.query(`SELECT id FROM admissions WHERE patient_id = $1 AND status = 'active'`, [b.patientId]);
-        if (existing.rows[0]) throw conflict('المريض منوّم بالفعل', { admissionId: existing.rows[0].id });
-
-        let bedId: string | null = b.bedId ?? null;
-        if (bedId) {
-          const bed = await db.query<{ status: string; ward_id: string }>('SELECT status, ward_id FROM beds WHERE id = $1', [bedId]);
-          if (!bed.rows[0]) throw notFound('السرير غير موجود');
-          if (bed.rows[0].status !== 'available') throw conflict(`السرير غير متاح حاليًا (${bed.rows[0].status})`);
-        } else if (b.wardId) {
-          const free = await db.query<{ id: string }>(
-            `SELECT id FROM beds WHERE ward_id = $1 AND status = 'available' ORDER BY bed_no LIMIT 1 FOR UPDATE`,
-            [b.wardId],
-          );
-          if (!free.rows[0]) throw conflict('لا يوجد سرير متاح في الجناح المحدد');
-          bedId = free.rows[0].id;
-        }
-
-        // Resolve the inpatient department server-side when the client omits it.
-        let departmentId = b.departmentId ?? null;
-        if (!departmentId) {
-          const dept = await db.query<{ id: string }>(
-            `SELECT id FROM departments WHERE facility_id = $1 AND is_active = true
-              ORDER BY (dept_type = 'inpatient') DESC, name_ar LIMIT 1`,
-            [patient.facility_id],
-          );
-          departmentId = dept.rows[0]?.id ?? null;
-        }
-        if (!departmentId) throw conflict('لا يوجد قسم متاح لتسجيل التنويم');
-
-        // Inpatient encounter (separate from any outpatient visit).
-        const encounterId = crypto.randomUUID();
-        const encounterNo = await nextDocumentNo(db, patient.facility_id, 'encounter', 'ENC');
-        await db.query(
-          `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
-             status, chief_complaint, created_by)
-           VALUES ($1,$2,$3,$4,'inpatient',$5,$6,'open',$7,$8)`,
-          [encounterId, patient.facility_id, encounterNo, b.patientId, departmentId,
-            b.attendingDoctorId ?? auth.user.id, b.reason, auth.user.id],
-        );
-        const visit = await db.query<{ value: { amount: number } }>(
-          `SELECT value FROM app_settings WHERE facility_id = $1 AND key = 'pricing.consultation'`,
-          [patient.facility_id],
-        );
-        await ensureCharge(db, {
+        const created = await createAdmission(db, {
           facilityId: patient.facility_id,
           patientId: b.patientId,
-          encounterId,
-          category: 'consultation',
-          description: 'تقييم تنويم',
-          referenceType: 'encounter_consultation',
-          referenceId: encounterId,
-          quantity: 1,
-          unitPrice: Number(visit.rows[0]?.value?.amount ?? 150),
-          createdBy: auth.user.id,
+          userId: auth.user.id,
+          bedId: b.bedId ?? null,
+          wardId: b.wardId ?? null,
+          departmentId: b.departmentId ?? null,
+          attendingDoctorId: b.attendingDoctorId ?? null,
+          reason: b.reason,
         });
-
-        const admissionId = crypto.randomUUID();
-        const admissionNo = await nextDocumentNo(db, patient.facility_id, 'admission', 'ADM');
-        await db.query(
-          `INSERT INTO admissions (id, facility_id, admission_no, patient_id, encounter_id, bed_id,
-             attending_doctor_id, admitted_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [admissionId, patient.facility_id, admissionNo, b.patientId, encounterId, bedId,
-            b.attendingDoctorId ?? auth.user.id, auth.user.id],
-        );
-        if (bedId) {
-          await db.query(`UPDATE beds SET status = 'occupied' WHERE id = $1`, [bedId]);
-        }
+        const { admissionId, admissionNo, encounterId, bedId } = created;
         reply.code(201);
         return { id: admissionId, admissionNo, encounterId, bedId };
       },
@@ -277,11 +221,7 @@ export async function inpatientRoutes(app: FastifyInstance) {
 
         const now = new Date();
         const days = Math.max(1, Math.ceil((now.getTime() - new Date(admission.admitted_at).getTime()) / 86_400_000));
-        const rate = await db.query<{ value: { amount: number } }>(
-          `SELECT value FROM app_settings WHERE facility_id = $1 AND key = 'pricing.bed_day'`,
-          [admission.facility_id],
-        );
-        const perDay = Number(rate.rows[0]?.value?.amount ?? 400);
+        const perDay = await priceFor(db, admission.facility_id, 'pricing.bed_day', 400);
         await ensureCharge(db, {
           facilityId: admission.facility_id,
           patientId: admission.patient_id,

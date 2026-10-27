@@ -18,6 +18,8 @@ import { labRoutes } from './modules/labs/routes';
 import { pharmacyRoutes } from './modules/pharmacy/routes';
 import { billingRoutes } from './modules/billing/routes';
 import { inpatientRoutes } from './modules/inpatient/routes';
+import { emergencyRoutes } from './modules/emergency/routes';
+import { reportRoutes } from './modules/reports/routes';
 import { dashboardRoutes } from './modules/dashboard/routes';
 import { adminRoutes } from './modules/admin/routes';
 import { portalRoutes } from './modules/portal/routes';
@@ -188,6 +190,8 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(pharmacyRoutes);
   await app.register(billingRoutes);
   await app.register(inpatientRoutes);
+  await app.register(emergencyRoutes);
+  await app.register(reportRoutes);
   await app.register(dashboardRoutes);
   await app.register(adminRoutes);
   await app.register(portalRoutes);

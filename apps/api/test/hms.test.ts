@@ -62,6 +62,7 @@ beforeAll(async () => {
   agents.reception = await login('reception@demo.hms', 'Reception#Demo2026', 'reception');
   agents.doctor = await login('dr.ahmed@demo.hms', 'Doctor#Demo2026', 'doctor');
   agents.nurse = await login('nurse@demo.hms', 'Nurse#Demo2026', 'nurse');
+  agents.records = await login('records@demo.hms', 'Records#Demo2026', 'records');
   agents.lab1 = await login('lab@demo.hms', 'Lab#Demo2026', 'lab1');
   agents.lab2 = await login('lab2@demo.hms', 'Lab#Demo2026', 'lab2');
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
@@ -445,6 +446,198 @@ describe('inpatient admissions and beds', () => {
   });
 });
 
+describe('emergency department and triage', () => {
+  it('registers an unidentified arrival with triage level and vitals', async () => {
+    const res = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/emergency/arrivals', {
+        unidentified: { sex: 'male', estimatedAge: 45, description: 'مجهول الهوية - أحضرته الهلال الأحمر' },
+        chiefComplaint: 'فقدان وعي متكرر',
+        level: 2,
+        vitals: { heartRate: 118, systolicBp: 92, spo2: 93, temperatureC: 37.8 },
+      }),
+      201,
+      'er arrival',
+    );
+    expect(res.temporaryIdentity).toBe(true);
+    state.erEncounterId = res.encounterId;
+    state.erPatientId = res.patientId;
+    const board = await expectStatus(await call(agents.doctor, 'GET', '/api/emergency/board'), 200, 'board');
+    const entry = board.items.find((i: any) => i.encounter_id === res.encounterId);
+    expect(entry.level).toBe(2);
+    expect(entry.identity_status).toBe('unverified_temporary');
+    expect(entry.waiting_minutes).toBeGreaterThanOrEqual(0);
+    expect(board.byLevel['2']).toBeGreaterThanOrEqual(1);
+  });
+
+  it('orders the board by clinical urgency, not arrival order', async () => {
+    const walkIn = await expectStatus(
+      await call(agents.reception, 'POST', '/api/patients', {
+        fullNameAr: 'نورة عبدالله الحربي',
+        dateOfBirth: '1996-11-09',
+        sex: 'female',
+        acknowledgeDuplicate: true,
+      }),
+      201,
+      'walk-in patient',
+    );
+    const low = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/emergency/arrivals', {
+        patientId: walkIn.patient.id,
+        chiefComplaint: 'ألم أسفل الظهر',
+        level: 5,
+      }),
+      201,
+      'non-urgent arrival',
+    );
+    const critical = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/emergency/arrivals', {
+        patientId: patient2.id,
+        chiefComplaint: 'ألم صدر حاد وضيق تنفس',
+        level: 1,
+      }),
+      201,
+      'critical arrival',
+    );
+    const board = await expectStatus(await call(agents.doctor, 'GET', '/api/emergency/board'), 200, 'board');
+    const levels = board.items.map((i: any) => i.level);
+    expect(levels[0]).toBe(1);
+    expect(levels[levels.length - 1]).toBe(5);
+    expect(levels).toEqual([...levels].sort((a: number, b: number) => a - b));
+    state.lowEncounterId = low.encounterId;
+    state.criticalEncounterId = critical.encounterId;
+  });
+
+  it('records a retriage with a mandatory reason and blocks silent level changes', async () => {
+    const retriage = await expectStatus(
+      await call(agents.nurse, 'POST', `/api/emergency/visits/${state.erEncounterId}/retriage`, { level: 1, reason: 'تدهور مستوى الوعي وانخفاض الضغط' }),
+      200,
+      'retriage',
+    );
+    expect(retriage).toMatchObject({ from: 2, to: 1 });
+    const same = await call(agents.nurse, 'POST', `/api/emergency/visits/${state.erEncounterId}/retriage`, { level: 1, reason: 'محاولة تكرار نفس المستوى' });
+    expect(same.statusCode).toBe(409);
+    const audit = await expectStatus(await call(agents.auditor, 'GET', '/api/audit?action=emergency.retriage'), 200, 'audit retriage');
+    expect(audit.items[0].reason).toContain('تدهور');
+  });
+
+  it('denies triage to roles without emergency permission', async () => {
+    const res = await call(agents.accountant, 'POST', '/api/emergency/arrivals', { patientId: patient2.id, chiefComplaint: 'محاولة', level: 3 });
+    expect(res.statusCode).toBe(403);
+    expect((await call(agents.accountant, 'GET', '/api/emergency/board')).statusCode).toBe(403);
+  });
+
+  it('discharges an ER visit with a summary and an audited fee', async () => {
+    const res = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/emergency/visits/${state.lowEncounterId}/disposition`, {
+        decision: 'discharge',
+        dischargeType: 'home',
+        summary: 'ألم عضلي بعد مجهود، غادر بحالة مستقرة مع مسكن ومتابعة عند الحاجة.',
+      }),
+      200,
+      'er discharge',
+    );
+    expect(res.fee).toBe(200);
+    const repeat = await call(agents.doctor, 'POST', `/api/emergency/visits/${state.lowEncounterId}/disposition`, {
+      decision: 'discharge',
+      summary: 'محاولة قرار ثانٍ على زيارة منتهية.',
+    });
+    expect(repeat.statusCode).toBe(409);
+  });
+
+  it('transfers a critical ER patient to an inpatient bed reusing the same encounter', async () => {
+    const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
+    const bed = beds.beds.find((b: any) => b.bed_status === 'available');
+    const res = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/emergency/visits/${state.criticalEncounterId}/disposition`, {
+        decision: 'admit',
+        bedId: bed.id,
+      }),
+      201,
+      'er admit',
+    );
+    expect(res.admissionId).toBeTruthy();
+    state.erAdmissionId = res.admissionId;
+    const admission = await expectStatus(await call(agents.doctor, 'GET', `/api/inpatient/admissions/${res.admissionId}`), 200, 'admission');
+    expect(admission.admission.encounter_id).toBe(state.criticalEncounterId);
+    const board = await expectStatus(await call(agents.doctor, 'GET', '/api/emergency/board'), 200, 'board');
+    expect(board.items.some((i: any) => i.encounter_id === state.criticalEncounterId)).toBe(false);
+  });
+
+  it('refuses to match identity while the ER visit is still open', async () => {
+    const blocked = await call(agents.records, 'POST', `/api/emergency/patients/${state.erPatientId}/identify`, {
+      targetPatientId: patient1.id,
+      evidence: 'محاولة مطابقة قبل إغلاق زيارة الطوارئ الجارية',
+    });
+    expect(blocked.statusCode).toBe(409);
+  });
+
+  it('matches an unidentified patient to a real record with documented evidence', async () => {
+    await expectStatus(
+      await call(agents.doctor, 'POST', `/api/emergency/visits/${state.erEncounterId}/disposition`, {
+        decision: 'discharge',
+        dischargeType: 'home',
+        summary: 'استقر الوعي والضغط بعد الإنعاش الأولي، غادر بحالة مستقرة مع متابعة عصبية.',
+      }),
+      200,
+      'close er visit before identity match',
+    );
+    const merge = await expectStatus(
+      await call(agents.records, 'POST', `/api/emergency/patients/${state.erPatientId}/identify`, {
+        targetPatientId: patient1.id,
+        evidence: 'تم التعرف عبر بطاقة الهوية التي أحضرها أفراد الأسرة بعد وصوله',
+      }),
+      200,
+      'identify',
+    );
+    expect(merge.mergedInto).toBe(patient1.id);
+    const chart = await expectStatus(await call(agents.doctor, 'GET', `/api/patients/${patient1.id}`), 200, 'merged chart');
+    expect(chart.encounters.length).toBeGreaterThanOrEqual(2);
+    const again = await call(agents.records, 'POST', `/api/emergency/patients/${state.erPatientId}/identify`, {
+      targetPatientId: patient1.id,
+      evidence: 'محاولة مطابقة ثانية لنفس الملف المؤقت بعد دمجه',
+    });
+    expect(again.statusCode).toBe(409);
+  });
+
+  afterAll(async () => {
+    if (state.erAdmissionId) {
+      await call(agents.doctor, 'POST', `/api/inpatient/admissions/${state.erAdmissionId}/discharge`, {
+        dischargeType: 'home',
+        summary: 'استقرت الحالة بعد المراقبة الليلية، وغادر مع خطة متابعة في عيادة القلب.',
+      });
+    }
+  });
+});
+
+describe('reports and audited export', () => {
+  it('lists available reports and returns a filtered dataset', async () => {
+    const list = await expectStatus(await call(agents.accountant, 'GET', '/api/reports'), 200, 'reports');
+    expect(list.reports.map((r: any) => r.key)).toContain('revenue');
+    const report = await expectStatus(await call(agents.accountant, 'GET', '/api/reports/revenue'), 200, 'revenue report');
+    expect(report.total).toBeGreaterThan(0);
+    expect(report.rows[0].invoice_no).toBeTruthy();
+  });
+
+  it('exports CSV with BOM, escaped cells, and an audit entry', async () => {
+    const csvRes = await call(agents.accountant, 'GET', '/api/reports/revenue?format=csv');
+    expect(csvRes.statusCode).toBe(200);
+    expect(csvRes.headers['content-type']).toContain('text/csv');
+    expect(csvRes.body.charCodeAt(0)).toBe(0xfeff);
+    expect(csvRes.body.split('\r\n').length).toBeGreaterThan(1);
+    const audit = await expectStatus(await call(agents.auditor, 'GET', '/api/audit?action=report.export'), 200, 'export audit');
+    expect(audit.items.length).toBeGreaterThan(0);
+    expect(audit.items[0].entity_id).toBe('revenue');
+  });
+
+  it('separates report reading from export rights and hides finance reports from clinical roles', async () => {
+    expect((await call(agents.doctor, 'GET', '/api/reports/revenue')).statusCode).toBe(403);
+    const doctorCsv = await call(agents.doctor, 'GET', '/api/reports/visits?format=csv');
+    expect(doctorCsv.statusCode).toBe(403);
+    const doctorJson = await call(agents.doctor, 'GET', '/api/reports/visits');
+    expect(doctorJson.statusCode).toBe(200);
+  });
+});
+
 describe('audit trail integrity', () => {
   it('verifies the hash chain and records security-relevant actions', async () => {
     const verify = await expectStatus(await call(agents.auditor, 'GET', '/api/audit/verify'), 200, 'verify chain');
@@ -467,6 +660,11 @@ describe('audit trail integrity', () => {
     await expect(
       db.asRole('hms_app', { 'app.facility_ids': agents.reception.me.activeFacilityId }, (q: any) =>
         q.query(`UPDATE clinical_notes SET assessment = 'edited' WHERE id = $1`, [notes.rows[0].id]),
+      ),
+    ).rejects.toThrow(/append-only|permission denied/);
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.reception.me.activeFacilityId }, (q: any) =>
+        q.query('DELETE FROM clinical_notes WHERE id = $1', [notes.rows[0].id]),
       ),
     ).rejects.toThrow(/append-only|permission denied/);
   });

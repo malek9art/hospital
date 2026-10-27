@@ -73,3 +73,23 @@ describe('audit hash chain', () => {
     expect(tampered).not.toBe(base);
   });
 });
+
+describe('CSV export hardening', () => {
+  it('neutralises spreadsheet formula injection and quotes special characters', async () => {
+    const { csvCell, toCsv } = await import('../src/modules/reports/routes');
+    expect(csvCell('=HYPERLINK("http://evil","x")')).toBe(`"'=HYPERLINK(""http://evil"",""x"")"`);
+    expect(csvCell('+1+1')).toBe("'+1+1");
+    expect(csvCell('-2')).toBe("'-2");
+    expect(csvCell('@SUM(A1)')).toBe("'@SUM(A1)");
+    expect(csvCell('عادي')).toBe('عادي');
+    expect(csvCell('a,b')).toBe('"a,b"');
+    expect(csvCell(null)).toBe('');
+    const csv = toCsv([{ name: '=1+1', visits: 3 }], [
+      { key: 'name', ar: 'الاسم' },
+      { key: 'visits', ar: 'الزيارات' },
+    ]);
+    expect(csv.startsWith('\uFEFF')).toBe(true);
+    expect(csv).toContain(`'=1+1`);
+    expect(csv).toContain('الاسم,الزيارات');
+  });
+});
