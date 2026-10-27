@@ -1,0 +1,19 @@
+{
+  "name": "hms-enterprise",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enterprise Hospital Management System (Arabic-first, RTL, PostgreSQL)",
+  "workspaces": ["apps/api", "apps/web"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "setup": "npm install && npm run db:reset && npm run build",
+    "dev": "npm -w apps/web run build && npm -w apps/api run dev",
+    "build": "npm -w apps/web run build && npm -w apps/api run build",
+    "start": "npm -w apps/api run start",
+    "db:migrate": "npm -w apps/api run db:migrate",
+    "db:seed": "npm -w apps/api run db:seed",
+    "db:reset": "npm -w apps/api run db:reset",
+    "test": "npm -w apps/api run test",
+    "typecheck": "npm -w apps/api run typecheck && npm -w apps/web run typecheck"
+  }
+}

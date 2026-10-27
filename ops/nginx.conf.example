@@ -1,0 +1,28 @@
+# TLS termination + security headers. The API sets its own headers/CSRF; the
+# proxy must pass Origin/Host unchanged (the API compares them).
+server {
+  listen 443 ssl http2;
+  server_name hms.example.sa;
+
+  ssl_certificate     /etc/ssl/certs/hms.crt;
+  ssl_certificate_key /etc/ssl/private/hms.key;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_ciphers HIGH:!aNULL:!MD5;
+  add_header Strict-Transport-Security "max-age=15552000; includeSubDomains" always;
+
+  client_max_body_size 12m;
+
+  location / {
+    proxy_pass http://api:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+
+  location /api/ {
+    proxy_pass http://api:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+}
