@@ -60,6 +60,14 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
   IF OLD.status = 'final' THEN
+    -- The only permitted post-signature change is the critical-result receipt
+    -- (acknowledgement), which is a fact about delivery, not about the report.
+    IF OLD.acknowledged_at IS NULL
+       AND NEW.acknowledged_at IS NOT NULL
+       AND (to_jsonb(OLD) - 'acknowledged_by' - 'acknowledged_at') = (to_jsonb(NEW) - 'acknowledged_by' - 'acknowledged_at')
+    THEN
+      RETURN NEW;
+    END IF;
     RAISE EXCEPTION 'finalized imaging reports are immutable; append a new version instead'
       USING ERRCODE = '42501';
   END IF;

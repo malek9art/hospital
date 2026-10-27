@@ -89,6 +89,23 @@
 - CSV يبدأ بـ BOM (Excel عربي) وتُحايد الخلايا التي تبدأ بـ `= + - @` لمنع حقن الصيغ.
 - تقرير الإيرادات يتطلب `report.finance` (فصل الأدوار السريرية عن المالية).
 
+## الأشعة
+
+| Method | Path | ملاحظات |
+|---|---|---|
+| POST | `/api/encounters/:id/imaging-orders` | `{modality, bodyPart, indication, priority}` — يتطلب `radiology.order` وزيارة مفتوحة |
+| GET | `/api/radiology/worklist?status=` | طابور مرتب بالأولوية (stat ثم urgent ثم routine) ثم وقت الطلب |
+| GET | `/api/radiology/orders/:id` | تفاصيل الطلب وكل إصدارات التقرير |
+| POST | `/api/radiology/orders/:id/start` | فني الأشعة — ordered → in_progress |
+| POST | `/api/radiology/orders/:id/perform` | فني الأشعة — إنهاء التصوير |
+| POST | `/api/radiology/orders/:id/reports` | أخصائي الأشعة — مسودة (إصدار جديد عند وجود تقرير معتمد) |
+| POST | `/api/radiology/reports/:id/finalize` | اعتماد نهائي: يقفل التقرير، يحوّل الطلب إلى verified، وينشئ رسم الفحص حسب `pricing.imaging_<modality>` |
+| POST | `/api/radiology/reports/:id/acknowledge` | استلام نتيجة حرجة (يتطلب `radiology.critical.ack`) |
+| POST | `/api/radiology/orders/:id/cancel` | سبب إلزامي، وقبل إتمام التصوير فقط |
+
+التقرير المعتمد غير قابل للتعديل أو الحذف على مستوى قاعدة البيانات (trigger)؛ التصحيح يكون بإصدار جديد مرتبط بالأصل عبر `amended_from`.
+**حدود معلنة:** لا يوجد تكامل DICOM/PACS ولا أرشفة صور — النظام يغطي الطلب والتنفيذ والتقرير والرسوم فقط.
+
 ## الإدارة والتدقيق
 
 `GET/POST/PATCH /api/admin/users`, `GET /api/admin/roles`, `GET/POST /api/admin/sessions[/:id/revoke]`, `GET /api/admin/facilities`, `GET /api/audit` (فلاتر), `GET /api/audit/verify` → `{ok,checked}`.

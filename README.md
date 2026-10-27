@@ -54,7 +54,7 @@ npm start               # http://localhost:8080
 
 **منفذ فعليًا ومختبر:** المرضى والملف الطبي (تسجيل/بحث/حساسية/أمراض مزمنة/دمج مدقق/سجل اطلاع) · المواعيد والاستقبال (حجز، منع تعارض، حضور، إلغاء، قائمة اليوم) · العيادات (زيارة، علامات حيوية، SOAP، تشخيص ICD-10، طلب تحاليل، وصفة، إغلاق) · المختبر (عينة، نتيجة، قيم حرجة وتنبيه، اعتماد منفصل، تصحيح مدقق) · الصيدلية (تحقق حساسية/تداخل، صرف FEFO، دفعات ومخزون وحركات، منع تكرار) · **التنويم والأسرّة** (تنويم بأمر طبيب، سرير متاح/مشغول/تنظيف/صيانة، نقل، خروج بملخص، احتساب أيام الإقامة وترحيلها للفاتورة) · **الطوارئ والفرز** (لوحة ESI ١–٥ مرتبة بالخطورة، وصول مجهول الهوية برقم مؤقت ومطابقة هوية موثقة، إعادة فرز مسببة، تحويل للتنويم على نفس الزيارة أو خروج/تحويل) · **التقارير والتصدير** (زيارات، نتائج معتمدة، إيرادات، إشغال؛ CSV عربي مع BOM، حجب صيغ Excel، وتسجيل كل تصدير في التدقيق) · الفوترة (فواتير تلقائية، دفع idempotent، إلغاء مدقق) · التدقيق (سلسلة hash قابلة للتحقق) · إدارة المستخدمين والأدوار والجلسات · تعدد المنشآت (RLS) · لوحة مؤشرات حقيقية · بوابة مريض للقراءة.
 
-**جزئي:** التأمين (بوليصات/مطالبات داخلية بلا ربط خارجي) · التمريض (علامات وملاحظات بلا خطط رعاية/تسليم مناوبات) · المخازن (أدوية فقط) · المالية (تحصيل وفواتير بلا دفتر أستاذ) · التقارير (CSV مدقق، PDF عبر طباعة المتصفح) · التكامل (FHIR جزئي: Patient/Observation؛ outbox بلا مزود بريد/SMS) · البوابة (لا حجز/دفع إلكتروني).
+**جزئي:** التأمين (بوليصات/مطالبات داخلية بلا ربط خارجي) · الأشعة (طلب/تنفيذ/تقرير معتمد — لا DICOM/PACS) · التمريض (علامات وملاحظات بلا خطط رعاية/تسليم مناوبات) · المخازن (أدوية فقط) · المالية (تحصيل وفواتير بلا دفتر أستاذ) · التقارير (CSV مدقق، PDF عبر طباعة المتصفح) · التكامل (FHIR جزئي: Patient/Observation؛ outbox بلا مزود بريد/SMS) · البوابة (لا حجز/دفع إلكتروني).
 
 **غير منفذ:** الأشعة/PACS/DICOM · العمليات والتخدير · العناية المركزة · بنك الدم · التغذية الطبية · التعقيم ومكافحة العدوى · الموارد البشرية · الأصول والصيانة · الجودة/الامتثال · طلبات الأشعة.
 
@@ -73,7 +73,7 @@ npm start               # http://localhost:8080
 
 ## 5) واجهات API (مختصر)
 
-`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (+vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/emergency/{board,arrivals,visits/:id/retriage,visits/:id/status,visits/:id/disposition,patients/:id/identify}` · `/api/reports[/:key]` (JSON/CSV) · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
+`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (+vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/emergency/{board,arrivals,visits/:id/retriage,visits/:id/status,visits/:id/disposition,patients/:id/identify}` · `/api/reports[/:key]` (JSON/CSV) · `/api/radiology/{worklist,orders/:id/start,orders/:id/perform,orders/:id/reports,reports/:id/finalize,reports/:id/acknowledge,orders/:id/cancel}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
 
 الكود هو العقد الفعلي (Zod + TypeScript). أخطاء موحدة: `{error:{code,message,details},requestId}`. التغييرات تتطلب رأس `x-csrf-token`، والمدفوعات/الصرف تقبل `Idempotency-Key`.
 
@@ -81,10 +81,10 @@ npm start               # http://localhost:8080
 
 ```
 $ npm test
- ✓ test/hms.test.ts  (42 tests)   ← رحلة مريض + طوارئ + تنويم + تقارير + صلاحيات + RLS + تدقيق + FHIR
+ ✓ test/hms.test.ts  (47 tests)   ← رحلة مريض + طوارئ + تنويم + أشعة + تقارير + صلاحيات + RLS + تدقيق + FHIR
  ✓ test/unit.test.ts (9 tests)    ← تشفير/TOTP/سلسلة التدقيق/CSV
  Test Files  2 passed (2)
-      Tests  51 passed (51)
+      Tests  56 passed (56)
 ```
 
 التفاصيل الكاملة لكل نوع من الأنواع العشرة المطلوبة في `docs/TEST_PLAN.md`. باختصار:
@@ -97,6 +97,7 @@ $ npm test
 | التنويم والأسرّة | ✅ 5 اختبارات (تنويم، سرير مشغول، نقل، خروج واحتساب، حراسة حالات السرير) |
 | الطوارئ والفرز | ✅ 8 اختبارات (وصول مجهول الهوية، ترتيب حسب الخطورة، إعادة فرز مسببة، رفض الأدوار غير المخولة، خروج/تنويم، مطابقة الهوية) |
 | التقارير والتصدير | ✅ 4 اختبارات (بيانات، BOM، تدقيق التصدير، فصل صلاحية التصدير والمالية، حجب صيغ Excel) |
+| الأشعة والتقارير | ✅ 6 اختبارات (طلب، منع غير المخولين، تنفيذ، تقرير معتمد، ثبات التقرير، نتيجة حرجة واستلامها، إلغاء قبل التصوير) |
 | تدقيق مقاوم للعبث | ✅ تحقق السلسلة + رفض UPDATE/DELETE على السجلات المعتمدة |
 | أمن/تبعيات/اختراق | ⚠️ مغطى جزئيًا؛ **لا SAST/DAST/pen-test** |
 | أداء/تحمل · E2E · UAT · تجربة استعادة | ❌ **لم تُنفذ** |
@@ -109,6 +110,17 @@ $ npm test
 - `docs/OPERATIONS.md` (نشر، مراقبة، تدوير مفاتيح، Runbook).
 - `docs/SECURITY.md` (نموذج تهديد، PDPL، استجابة الحوادث، RPO/RTO).
 - `docs/API.md` · `docs/DATA_MODEL.md` · `docs/TEST_PLAN.md` · `docs/USER_GUIDE.md`.
+
+### النشر على Vercel (بيئة عرض جاهزة)
+
+المشروع `hospital-hms` منشور على Vercel ويعمل بنفس كود الـAPI (Fastify) — كل `/api/*` تُوجَّه إلى دالة واحدة `api/index.ts`، والواجهة تُخدم كملفات ثابتة من `public/`.
+
+- **الرابط:** https://hospital-hms-cyan.vercel.app
+- **الحسابات:** نفس الحسابات التجريبية أعلاه (`@demo.hms`)، والبيانات تُزرع تلقائيًا عند أول تشغيل.
+- **الإعداد:** `NODE_ENV=production` · `COOKIE_SECURE=true` · `TRUST_PROXY=true` · `AUTO_BOOTSTRAP=true` · `SEED_DEMO=true` · `PGLITE_DIR=/tmp/hms-data` · وأسرار AES/HMAC بثلاثة مفاتيح `SESSION_SECRET` و`ENCRYPTION_KEY` و`SEARCH_HASH_KEY` (كل واحد base64 لـ32 بايت عشوائية؛ يتحقق منها `config.ts` برسالة واضحة).
+- **قيود صريحة:** قاعدة PGlite داخل الدالة تعمل على `/tmp`، أي أنها **مؤقتة** وتُعاد تهيئتها عند إعادة تشغيل الدالة (cold start) أو تغيّر النسخة. لذلك تظهر لافتة صريحة في الواجهة، وهذا **ليس** بديلًا عن قاعدة إنتاج.
+- **لجعلها دائمة:** اربط Postgres (Neon/Vercel Marketplace) واضبط `DB_MODE=postgres` و`DATABASE_URL` ثم أعد النشر؛ المخطط والهجرات والـRLS متطابقة.
+- **إعادة النشر:** أي دفع إلى `arena/94f94536-hospital` + إنشاء نشر جديد؛ لا توجد أسرار في المستودع.
 
 ## 8) المخاطر المتبقية (مهمة)
 

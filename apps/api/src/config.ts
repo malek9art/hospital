@@ -45,11 +45,26 @@ function loadSecrets(env: z.infer<typeof EnvSchema>) {
     stored = {};
   }
   const generate = () => crypto.randomBytes(32).toString('base64');
+  // All three keys feed AES-256-GCM / HMAC-SHA256, so they must decode to
+  // exactly 32 bytes. Anything else fails deep inside node:crypto with the
+  // unhelpful "Invalid key length" - validate it here with a clear message.
+  const decodeKey = (name: string, value: string) => {
+    let bytes: Buffer;
+    try {
+      bytes = Buffer.from(value, 'base64');
+    } catch {
+      throw new Error(`${name} must be base64-encoded`);
+    }
+    if (bytes.length !== 32) {
+      throw new Error(`${name} must be base64 of exactly 32 random bytes (got ${bytes.length} bytes). Generate with: openssl rand -base64 32`);
+    }
+    return value;
+  };
   const resolveKey = (name: 'SESSION_SECRET' | 'ENCRYPTION_KEY' | 'SEARCH_HASH_KEY') => {
     const fromEnv = env[name];
-    if (fromEnv && fromEnv.length >= 32 && !fromEnv.startsWith('REPLACE')) return fromEnv;
+    if (fromEnv && fromEnv.length >= 32 && !fromEnv.startsWith('REPLACE')) return decodeKey(name, fromEnv);
     if (env.NODE_ENV === 'production') {
-      throw new Error(`${name} must be set (>=32 chars) when NODE_ENV=production`);
+      throw new Error(`${name} must be set (32 random bytes, base64) when NODE_ENV=production`);
     }
     if (!stored[name]) {
       stored[name] = generate();

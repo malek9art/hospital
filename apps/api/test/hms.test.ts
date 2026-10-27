@@ -65,6 +65,8 @@ beforeAll(async () => {
   agents.records = await login('records@demo.hms', 'Records#Demo2026', 'records');
   agents.lab1 = await login('lab@demo.hms', 'Lab#Demo2026', 'lab1');
   agents.lab2 = await login('lab2@demo.hms', 'Lab#Demo2026', 'lab2');
+  agents.radTech = await login('radiology@demo.hms', 'Radiology#Demo2026', 'radTech');
+  agents.radiologist = await login('radiologist@demo.hms', 'Radiology#Demo2026', 'radiologist');
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
   agents.accountant = await login('accountant@demo.hms', 'Account#Demo2026', 'accountant');
   agents.auditor = await login('auditor@demo.hms', 'Auditor#Demo2026', 'auditor');
@@ -747,5 +749,199 @@ describe('account lockout and rate limiting', () => {
       if (res.statusCode === 429) sawRateLimit = true;
     }
     expect(sawRateLimit).toBe(true);
+  });
+});
+
+describe('radiology orders, signed reports and critical results', () => {
+  it('orders an imaging study from an open encounter and rejects unauthorized ordering', async () => {
+    const patient = await expectStatus(
+      await call(agents.reception, 'POST', '/api/patients', {
+        fullNameAr: 'ريم فهد الزهراني',
+        dateOfBirth: '1988-06-14',
+        sex: 'female',
+        acknowledgeDuplicate: true,
+      }),
+      201,
+      'imaging patient',
+    );
+    state.imagingPatientId = patient.patient.id;
+    // Reception books the visit, which is what establishes the doctor's care
+    // relationship; the chart is not openable by a physician without one.
+    const appointment = await expectStatus(
+      await call(agents.reception, 'POST', '/api/appointments', {
+        patientId: state.imagingPatientId,
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'GEN').id,
+        doctorId: agents.doctor.me.user.id,
+        scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+      201,
+      'imaging appointment',
+    );
+    state.imagingEncounterId = (
+      await expectStatus(
+        await call(agents.doctor, 'POST', '/api/encounters', {
+          patientId: state.imagingPatientId,
+          appointmentId: appointment.id,
+          encounterType: 'outpatient',
+          departmentId: bootstrap.departments.find((d: any) => d.code === 'GEN').id,
+          chiefComplaint: 'سعال مزمن مع ألم صدري',
+        }),
+        201,
+        'imaging encounter',
+      )
+    ).id;
+
+    const order = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/encounters/${state.imagingEncounterId}/imaging-orders`, {
+        modality: 'ct',
+        bodyPart: 'الصدر',
+        indication: 'ألم صدري مع سعال مزمن لأكثر من ثلاثة أسابيع',
+        priority: 'urgent',
+      }),
+      201,
+      'imaging order',
+    );
+    expect(order.orderNo).toMatch(/^IMG-\d{6}$/);
+    state.imagingOrderId = order.id;
+
+    const nurseAttempt = await call(agents.nurse, 'POST', `/api/encounters/${state.imagingEncounterId}/imaging-orders`, {
+      modality: 'xray',
+      bodyPart: 'الصدر',
+      indication: 'طلب غير مصرح من التمريض',
+    });
+    expect(nurseAttempt.statusCode).toBe(403);
+  });
+
+  it('refuses a report before the study is performed and refuses double finalization', async () => {
+    const early = await call(agents.radiologist, 'POST', `/api/radiology/orders/${state.imagingOrderId}/reports`, {
+      findings: 'لا يمكن التقرير قبل التصوير',
+      impression: 'محاولة مبكرة',
+    });
+    expect(early.statusCode).toBe(409);
+  });
+
+  it('performs and signs the study, bills the modality price and locks the report', async () => {
+    await expectStatus(await call(agents.radTech, 'POST', `/api/radiology/orders/${state.imagingOrderId}/start`), 200, 'start study');
+    await expectStatus(await call(agents.radTech, 'POST', `/api/radiology/orders/${state.imagingOrderId}/perform`), 200, 'perform study');
+
+    const draft = await expectStatus(
+      await call(agents.radiologist, 'POST', `/api/radiology/orders/${state.imagingOrderId}/reports`, {
+        findings: 'تكثف في الفص السفلي الأيمن مع انصباب جنبي بسيط',
+        impression: 'التهاب رئوي فصي سفلي أيمن',
+        recommendation: 'متابعة بعد إتمام المضاد الحيوي',
+      }),
+      201,
+      'draft report',
+    );
+    state.imagingReportId = draft.id;
+
+    const finalized = await expectStatus(
+      await call(agents.radiologist, 'POST', `/api/radiology/reports/${draft.id}/finalize`),
+      200,
+      'finalize report',
+    );
+    expect(finalized.status).toBe('verified');
+    expect(finalized.fee).toBe(650);
+    expect(finalized.invoiceId).toBeTruthy();
+
+    const worklist = await expectStatus(
+      await call(agents.radTech, 'GET', '/api/radiology/worklist?status=verified'),
+      200,
+      'verified worklist',
+    );
+    const row = worklist.items.find((i: any) => i.id === state.imagingOrderId);
+    expect(row.status).toBe('verified');
+    expect(row.modality_ar).toBe('أشعة مقطعية');
+
+    const twice = await call(agents.radiologist, 'POST', `/api/radiology/reports/${draft.id}/finalize`);
+    expect(twice.statusCode).toBe(409);
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.doctor.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE imaging_reports SET findings = 'تعديل صامت' WHERE id = $1`, [draft.id]),
+      ),
+    ).rejects.toThrow(/immutable|permission denied/);
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.doctor.me.activeFacilityId }, (q: any) =>
+        q.query('DELETE FROM imaging_reports WHERE id = $1', [draft.id]),
+      ),
+    ).rejects.toThrow(/cannot be deleted|permission denied/);
+  });
+
+  it('tracks critical findings until the ordering physician acknowledges them', async () => {
+    const order = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/encounters/${state.imagingEncounterId}/imaging-orders`, {
+        modality: 'xray',
+        bodyPart: 'الصدر',
+        indication: 'اشتباه استرواح صدري بعد إصابة',
+        priority: 'stat',
+      }),
+      201,
+      'stat order',
+    );
+    await expectStatus(await call(agents.radTech, 'POST', `/api/radiology/orders/${order.id}/perform`), 200, 'perform stat');
+    const report = await expectStatus(
+      await call(agents.radiologist, 'POST', `/api/radiology/orders/${order.id}/reports`, {
+        findings: 'استرواح صدري أيمن بنسبة 25% مع انزياح بسيط للمنصف',
+        impression: 'استرواح صدري أيمن يحتاج تدخلًا عاجلًا',
+        critical: true,
+      }),
+      201,
+      'critical report',
+    );
+    const finalized = await expectStatus(
+      await call(agents.radiologist, 'POST', `/api/radiology/reports/${report.id}/finalize`),
+      200,
+      'finalize critical',
+    );
+    expect(finalized.requiresAcknowledgement).toBe(true);
+
+    const techAck = await call(agents.radTech, 'POST', `/api/radiology/reports/${report.id}/acknowledge`, {
+      note: 'محاولة استلام من فني الأشعة',
+    });
+    expect(techAck.statusCode).toBe(403);
+
+    await expectStatus(
+      await call(agents.doctor, 'POST', `/api/radiology/reports/${report.id}/acknowledge`, {
+        note: 'تم إبلاغي هاتفيًا وطلبت تحضير أنبوب صدري',
+      }),
+      200,
+      'critical ack',
+    );
+    const again = await call(agents.doctor, 'POST', `/api/radiology/reports/${report.id}/acknowledge`, {
+      note: 'تكرار الاستلام',
+    });
+    expect(again.statusCode).toBe(409);
+  });
+
+  it('cancels only studies that have not been acquired', async () => {
+    const order = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/encounters/${state.imagingEncounterId}/imaging-orders`, {
+        modality: 'us',
+        bodyPart: 'البطن',
+        indication: 'ألم بطني متكرر',
+      }),
+      201,
+      'cancelable order',
+    );
+    await expectStatus(
+      await call(agents.doctor, 'POST', `/api/radiology/orders/${order.id}/cancel`, { reason: 'استُبدل بسونار شامل بعد مراجعة الطلب' }),
+      200,
+      'cancel order',
+    );
+    const performedOrder = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/encounters/${state.imagingEncounterId}/imaging-orders`, {
+        modality: 'xray',
+        bodyPart: 'الحوض',
+        indication: 'ألم حوض بعد سقوط',
+      }),
+      201,
+      'performed order',
+    );
+    await expectStatus(await call(agents.radTech, 'POST', `/api/radiology/orders/${performedOrder.id}/perform`), 200, 'perform before cancel');
+    const late = await call(agents.doctor, 'POST', `/api/radiology/orders/${performedOrder.id}/cancel`, {
+      reason: 'محاولة إلغاء بعد التصوير',
+    });
+    expect(late.statusCode).toBe(409);
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'lab' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -248,6 +248,7 @@ function Clinic({ m }: { m: Me }) {
   const [dx, setDx] = useState({ icd10Code: '', description: '' });
   const [tests, setTests] = useState<string[]>([]); const [priority, setPriority] = useState('routine');
   const [rx, setRx] = useState({ drugId: '', dose: '', route: 'فموي', frequency: '', durationDays: '5', quantity: '10' });
+  const [img, setImg] = useState({ modality: 'xray', bodyPart: '', indication: '', priority: 'routine' });
   const refresh = async () => { if (enc) setEnc(await api(`/api/encounters/${enc.encounter.id}`)); };
   useEffect(() => { Promise.all([api<any>('/api/appointments?limit=50'), api('/api/meta/bootstrap')]).then(([a, b]) => { setAppts(a.items); setBoot(b); }).catch((e) => setErr(e.message)); }, []);
   async function start(a: any) {
@@ -301,6 +302,17 @@ function Clinic({ m }: { m: Me }) {
               <div className="flex gap-2 mt-2"><select className="input" value={priority} onChange={(ev) => setPriority(ev.target.value)}><option value="routine">روتيني</option><option value="urgent">عاجل</option><option value="stat">فوري</option></select>
                 <button className="btn-primary" disabled={!tests.length} onClick={() => post(`/api/encounters/${e.id}/lab-orders`, { tests, priority }, 'تم إرسال طلب التحاليل')}>إرسال</button></div>
             </Card>
+            {has(m, 'radiology.order') && <Card title="طلب أشعة">
+              <div className="grid grid-cols-2 gap-2">
+                <div><label className="label">النوع</label><select className="input" value={img.modality} onChange={(ev) => setImg({ ...img, modality: ev.target.value })}>
+                  <option value="xray">أشعة سينية</option><option value="ct">مقطعية</option><option value="mri">رنين مغناطيسي</option><option value="us">سونار</option><option value="mammography">ماموغرام</option><option value="fluoroscopy">فلوروسكوبي</option>
+                </select></div>
+                <div><label className="label">المنطقة</label><input className="input" value={img.bodyPart} onChange={(ev) => setImg({ ...img, bodyPart: ev.target.value })} placeholder="الصدر" /></div>
+                <div className="col-span-2"><label className="label">المبرر السريري</label><input className="input" value={img.indication} onChange={(ev) => setImg({ ...img, indication: ev.target.value })} /></div>
+                <div><label className="label">الأولوية</label><select className="input" value={img.priority} onChange={(ev) => setImg({ ...img, priority: ev.target.value })}><option value="routine">روتيني</option><option value="urgent">عاجل</option><option value="stat">فوري</option></select></div>
+                <div className="flex items-end"><button className="btn-primary" disabled={img.bodyPart.length < 2 || img.indication.length < 5} onClick={() => post(`/api/encounters/${e.id}/imaging-orders`, img, 'تم إرسال طلب الأشعة')}>إرسال الطلب</button></div>
+              </div>
+            </Card>}
             <Card title="وصفة طبية">
               <div className="grid grid-cols-2 gap-2">
                 <div className="col-span-2"><label className="label">الدواء</label><select className="input" value={rx.drugId} onChange={(ev) => setRx({ ...rx, drugId: ev.target.value })}><option value="">—</option>{(boot?.drugs ?? []).map((d: any) => <option key={d.id} value={d.id}>{d.name_ar}</option>)}</select></div>
@@ -664,6 +676,116 @@ function Alerts() {
     {a.acknowledged_at ? <Badge value="verified" /> : <button className="btn-ghost text-xs" onClick={async () => { await api(`/api/lab/alerts/${a.id}/ack`, { method: 'POST', body: JSON.stringify({ note: 'تم إبلاغ الطبيب المعالج' }) }); location.reload(); }}>إقرار</button>}</li>)}{items.length === 0 && <li className="text-slate-500">لا تنبيهات.</li>}</ul></Card>;
 }
 
+
+// -------------------------------------------------------------- Radiology ----
+const MODALITY_LABEL: Record<string, string> = {
+  xray: 'أشعة سينية', ct: 'مقطعية', mri: 'رنين مغناطيسي', us: 'سونار', mammography: 'ماموغرام', fluoroscopy: 'فلوروسكوبي',
+};
+
+function Radiology({ m }: { m: Me }) {
+  const [items, setItems] = useState<any[]>([]); const [status, setStatus] = useState('active');
+  const [detail, setDetail] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+  const [form, setForm] = useState({ findings: '', impression: '', recommendation: '', critical: false });
+  const [ackNote, setAckNote] = useState(''); const [cancelReason, setCancelReason] = useState('');
+
+  async function load() {
+    try { const r = await api<any>(`/api/radiology/worklist?status=${status}`); setItems(r.items); }
+    catch (e: any) { setErr(e.message); }
+  }
+  useEffect(() => { load(); }, [status]);
+  async function open(id: string) {
+    try { setDetail(await api(`/api/radiology/orders/${id}`)); } catch (e: any) { setErr(e.message); }
+  }
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); await load(); if (detail) await open(detail.order.id); }
+    catch (e: any) { setErr(e.message); }
+  }
+  const draft = detail?.reports.find((r: any) => r.status === 'draft');
+  const finalReport = detail?.reports.find((r: any) => r.status === 'final');
+  const o = detail?.order;
+
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+      <Card title="قائمة عمل الأشعة" action={<select className="input w-44" value={status} onChange={(e) => setStatus(e.target.value)}>
+        <option value="active">النشطة</option><option value="ordered">بالانتظار</option><option value="in_progress">قيد التصوير</option>
+        <option value="performed">بانتظار التقرير</option><option value="verified">معتمدة</option><option value="cancelled">ملغاة</option><option value="all">الكل</option>
+      </select>}>
+        <div className="overflow-x-auto"><table className="w-full min-w-[820px]"><thead><tr>
+          <th className="th">الرقم</th><th className="th">المريض</th><th className="th">الفحص</th><th className="th">الأولوية</th><th className="th">الحالة</th><th className="th">طالب الفحص</th><th className="th"></th>
+        </tr></thead><tbody>
+          {items.map((i: any) => <tr key={i.id} className={i.priority === 'stat' ? 'bg-rose-50/60' : ''}>
+            <td className="td font-mono text-xs">{i.order_no}</td>
+            <td className="td">{i.patient_name}<span className="block text-xs text-slate-400">{i.mrn} · {i.encounter_no}</span></td>
+            <td className="td">{i.modality_ar}<span className="block text-xs text-slate-400">{i.body_part}</span></td>
+            <td className="td"><Badge value={i.priority === 'stat' ? 'urgent' : i.priority === 'urgent' ? 'in_consultation' : 'open'} /> <span className="text-xs text-slate-500">{i.priority}</span></td>
+            <td className="td"><Badge value={i.status === 'verified' ? 'completed' : i.status === 'cancelled' ? 'cancelled' : 'open'} /> <span className="text-xs text-slate-500">{i.status}</span>{i.critical && <span className="badge bg-rose-600 text-white ms-1">حرجة</span>}</td>
+            <td className="td text-xs">{i.ordered_by_name}</td>
+            <td className="td"><button className="btn-ghost text-xs" onClick={() => open(i.id)}>فتح</button></td>
+          </tr>)}
+          {items.length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا طلبات في هذه الحالة.</td></tr>}
+        </tbody></table></div>
+      </Card>
+
+      {o && <Card title={`${o.order_no} — ${o.patient_name}`} action={<button className="btn-ghost text-xs" onClick={() => { setDetail(null); setForm({ findings: '', impression: '', recommendation: '', critical: false }); }}>إغلاق</button>}>
+        <div className="grid md:grid-cols-2 gap-3">
+          <div className="text-sm space-y-1">
+            <p><span className="text-slate-500">الفحص:</span> {MODALITY_LABEL[o.modality]} — {o.body_part}</p>
+            <p><span className="text-slate-500">المبرر:</span> {o.clinical_indication}</p>
+            <p><span className="text-slate-500">الحالة:</span> {o.status} · <span className="text-slate-500">الأولوية:</span> {o.priority}</p>
+            <p><span className="text-slate-500">الطبيب الطالب:</span> {o.ordered_by_name}</p>
+            {o.performed_at && <p><span className="text-slate-500">تم التصوير:</span> {dt(o.performed_at)}</p>}
+            {o.cancel_reason && <p className="text-rose-600">سبب الإلغاء: {o.cancel_reason}</p>}
+          </div>
+          <div className="flex flex-wrap gap-2 items-start">
+            {has(m, 'radiology.perform') && o.status === 'ordered' && <button className="btn-primary" onClick={() => act(() => api(`/api/radiology/orders/${o.id}/start`, { method: 'POST' }), 'بدأ التصوير')}>بدء التصوير</button>}
+            {has(m, 'radiology.perform') && ['ordered', 'in_progress'].includes(o.status) && <button className="btn-primary" onClick={() => act(() => api(`/api/radiology/orders/${o.id}/perform`, { method: 'POST' }), 'أُتم التصوير')}>إتمام التصوير</button>}
+            {has(m, 'radiology.order') && ['ordered', 'in_progress'].includes(o.status) && <div className="w-full flex gap-2 mt-2">
+              <input className="input" placeholder="سبب الإلغاء (5 أحرف على الأقل)" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} />
+              <button className="btn-danger" disabled={cancelReason.length < 5} onClick={() => act(() => api(`/api/radiology/orders/${o.id}/cancel`, { method: 'POST', body: JSON.stringify({ reason: cancelReason }) }), 'أُلغي الطلب')}>إلغاء</button>
+            </div>}
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <h4 className="font-semibold text-sm">التقارير</h4>
+          {detail.reports.length === 0 && <p className="text-xs text-slate-500">لا تقارير بعد.</p>}
+          {detail.reports.map((r: any) => <div key={r.id} className="border rounded-lg p-2 text-sm">
+            <div className="flex justify-between text-xs text-slate-500"><span>الإصدار {r.version} · {r.reported_by_name} · {dt(r.reported_at)}</span>
+              <span>{r.status === 'final' ? 'معتمد' : 'مسودة'}{r.is_critical && ' · نتيجة حرجة'}{r.acknowledged_at && ` · مُستلمة بواسطة ${r.acknowledged_by_name}`}</span></div>
+            <p className="mt-1"><span className="text-slate-500">النتائج:</span> {r.findings}</p>
+            <p><span className="text-slate-500">الانطباع:</span> {r.impression}</p>
+            {r.recommendation && <p><span className="text-slate-500">التوصية:</span> {r.recommendation}</p>}
+          </div>)}
+        </div>
+
+        {has(m, 'radiology.report') && ['performed', 'reported'].includes(o.status) && !draft && <div className="mt-3 border-t pt-3">
+          <h4 className="font-semibold text-sm mb-2">{detail.reports.length ? 'تقرير تصحيحي (إصدار جديد)' : 'كتابة التقرير'}</h4>
+          <textarea className="input mb-2" rows={2} placeholder="النتائج (5 أحرف على الأقل)" value={form.findings} onChange={(e) => setForm({ ...form, findings: e.target.value })} />
+          <textarea className="input mb-2" rows={2} placeholder="الانطباع التشخيصي" value={form.impression} onChange={(e) => setForm({ ...form, impression: e.target.value })} />
+          <input className="input mb-2" placeholder="التوصية (اختياري)" value={form.recommendation} onChange={(e) => setForm({ ...form, recommendation: e.target.value })} />
+          <label className="flex items-center gap-2 text-xs mb-2"><input type="checkbox" checked={form.critical} onChange={(e) => setForm({ ...form, critical: e.target.checked })} /> نتيجة حرجة تستوجب إبلاغ الطبيب الطالب</label>
+          <button className="btn-primary" disabled={form.findings.length < 5 || form.impression.length < 5}
+            onClick={() => act(() => api(`/api/radiology/orders/${o.id}/reports`, { method: 'POST', body: JSON.stringify(form) }), 'حُفظ التقرير كمسودة')}>حفظ كمسودة</button>
+        </div>}
+
+        {has(m, 'radiology.verify') && draft && <div className="mt-3 border-t pt-3">
+          <button className="btn-primary" onClick={() => act(() => api(`/api/radiology/reports/${draft.id}/finalize`, { method: 'POST' }), 'اعتُمد التقرير وأُضيفت الرسوم')}>اعتماد التقرير النهائي</button>
+          <p className="text-xs text-slate-500 mt-1">الاعتماد يقفل التقرير نهائيًا؛ أي تصحيح لاحق يكون بإصدار جديد مرتبط بالأصل.</p>
+        </div>}
+
+        {has(m, 'radiology.critical.ack') && finalReport?.is_critical && !finalReport.acknowledged_at && <div className="mt-3 border-t pt-3">
+          <h4 className="font-semibold text-sm text-rose-700 mb-1">استلام نتيجة حرجة</h4>
+          <div className="flex gap-2"><input className="input" placeholder="ملاحظة الاستلام والإجراء" value={ackNote} onChange={(e) => setAckNote(e.target.value)} />
+            <button className="btn-primary" disabled={ackNote.length < 5} onClick={() => act(() => api(`/api/radiology/reports/${finalReport.id}/acknowledge`, { method: 'POST', body: JSON.stringify({ note: ackNote }) }), 'سُجّل استلام النتيجة الحرجة')}>تأكيد الاستلام</button></div>
+        </div>}
+      </Card>}
+    </div>
+  );
+}
+
 // --------------------------------------------------------------- Pharmacy ----
 function Pharmacy({ m }: { m: Me }) {
   const [items, setItems] = useState<any[]>([]); const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
@@ -854,6 +976,7 @@ export default function App() {
         {page === 'emergency' && <Emergency m={auth} />}
         {page === 'inpatient' && <Inpatient m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
+        {page === 'radiology' && <Radiology m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}
         {page === 'billing' && <Billing m={auth} />}
         {page === 'reports' && <Reports m={auth} />}
