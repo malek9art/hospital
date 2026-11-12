@@ -1,0 +1,112 @@
+# نموذج البيانات وقاعدة البيانات
+
+- **المحرك:** PostgreSQL 18 (التطوير عبر PGlite بنفس المحرك، والإنتاج عبر `pg`).
+- **الترحيلات:** `db/migrations/*.sql` (001..016) تُطبَّق بترتيب اسمي، وتُسجَّل في `schema_migrations` مع checksum؛ تعديل ملف مطبَّق يوقف الترحيل (يمنع الانحراف).
+- **الأدوار:** `hms_owner` (ترحيلات فقط) / `hms_app` (عمل الموظفين، RLS مفروض) / `hms_portal` (المريض، RLS بمستوى المريض).
+- **الجلسة:** كل معاملة تُنفّذ `SET LOCAL ROLE` + `set_config('app.facility_ids'|'app.patient_id', …, true)` فلا تتسرب الصلاحيات بين الطلبات.
+
+## العلاقات الأساسية
+
+```mermaid
+erDiagram
+  FACILITIES ||--o{ DEPARTMENTS : has
+  FACILITIES ||--o{ PATIENTS : owns
+  USERS ||--o{ USER_ROLES : assigned
+  USER_ROLES }o--|| ROLES : role
+  ROLES ||--o{ ROLE_PERMISSIONS : grants
+  USERS ||--o{ SESSIONS : opens
+  PATIENTS ||--o{ APPOINTMENTS : books
+  APPOINTMENTS |o--o| ENCOUNTERS : becomes
+  PATIENTS ||--o{ ENCOUNTERS : visits
+  ENCOUNTERS ||--o{ VITALS : records
+  ENCOUNTERS ||--o{ CLINICAL_NOTES : documents
+  ENCOUNTERS ||--o{ DIAGNOSES : codes
+  ENCOUNTERS ||--o{ LAB_ORDERS : requests
+  LAB_ORDERS ||--o{ LAB_ORDER_ITEMS : contains
+  LAB_ORDER_ITEMS ||--|| LAB_RESULTS : yields
+  LAB_RESULTS ||--o{ LAB_RESULT_AMENDMENTS : amended
+  LAB_RESULTS ||--o{ CRITICAL_ALERTS : raises
+  ENCOUNTERS ||--o{ PRESCRIPTIONS : prescribes
+  PRESCRIPTIONS ||--o{ PRESCRIPTION_ITEMS : contains
+  PRESCRIPTION_ITEMS ||--o{ DISPENSES : dispensed
+  DRUG_BATCHES ||--o{ DISPENSES : from
+  DRUGS ||--o{ DRUG_BATCHES : stocked
+  DRUGS ||--o{ STOCK_MOVEMENTS : moves
+  PATIENTS ||--o{ INVOICES : billed
+  ENCOUNTERS ||--o{ INVOICES : generates
+  INVOICES ||--o{ INVOICE_ITEMS : lines
+  INVOICES ||--o{ PAYMENTS : paid
+  INVOICES ||--o{ INSURANCE_CLAIMS : claimed
+  PATIENTS ||--o{ INSURANCE_POLICIES : covered
+  WARDS ||--o{ ROOMS : contains
+  ROOMS ||--o{ BEDS : contains
+  PATIENTS ||--o{ ADMISSIONS : admitted
+  ADMISSIONS ||--o{ BED_TRANSFERS : moves
+  USERS ||--o{ AUDIT_LOG : acts
+  PATIENTS ||--o{ PATIENT_ACCESS_LOG : accessed
+  USERS ||--o{ BREAK_GLASS_GRANTS : emergency
+```
+
+## الجداول (79)
+
+| المجموعة | الجداول |
+|---|---|
+| المنشآت والهوية | `facilities`, `departments`, `users`, `user_facilities`, `roles`, `permissions`, `role_permissions`, `user_roles`, `sessions`, `user_recovery_codes` |
+| التدقيق والبنية | `audit_log`, `audit_chain_state`, `idempotency_keys`, `number_sequences`, `app_settings`, `notifications_outbox`, `break_glass_grants`, `patient_access_log` |
+| المرضى | `patients`, `patient_allergies`, `patient_conditions`, `consents` |
+| العيادة | `appointments`, `encounters`, `vitals`, `clinical_notes`, `diagnoses` |
+| المختبر | `lab_tests`, `lab_orders`, `lab_order_items`, `lab_results`, `lab_result_amendments`, `critical_alerts` |
+| الصيدلية | `drugs`, `drug_batches`, `drug_interactions`, `prescriptions`, `prescription_items`, `dispenses`, `stock_movements` |
+| الفوترة | `insurance_policies`, `invoices`, `invoice_items`, `payments`, `insurance_claims` |
+| التنويم | `wards`, `rooms`, `beds`, `admissions`, `bed_transfers` |
+| التمريض | `medication_administrations`, `care_plans`, `care_plan_tasks`, `shift_handovers` |
+| الأشعة | `imaging_orders`, `imaging_reports` |
+| العمليات والتخدير | `operating_theatres`, `surgical_cases`, `surgical_checklists`, `anesthesia_records`, `pacu_records` |
+| العناية المركزة | `icu_stays`, `icu_observations`, `icu_ventilator_settings`, `icu_daily_goals`, `icu_scores` |
+| بنك الدم | `blood_donors`, `blood_units`, `blood_requests`, `blood_crossmatches`, `blood_transfusions`, `blood_reactions` |
+| التغذية الطبية | `nutrition_screenings`, `nutrition_assessments`, `nutrition_diet_orders`, `nutrition_trays`, `nutrition_tube_orders`, `nutrition_followups` |
+| التعقيم المركزي | `cssd_instrument_sets`, `cssd_sterilization_loads`, `cssd_packs` |
+| مكافحة العدوى | `infection_isolations`, `infection_cases`, `hand_hygiene_audits` |
+| عرض للمريض | `portal_clinicians` (VIEW) |
+
+## قيود سلامة مهمة
+
+| القيد | الغرض |
+|---|---|
+| `patients (facility_id, mrn)` UNIQUE + `national_id_hash` UNIQUE (غير المدموج) | منع التكرار |
+| `appointments_no_double_booking (doctor_id, scheduled_at) WHERE status IN ('booked','checked_in','in_consultation')` | منع الحجز المزدوج |
+| `encounters_one_open_per_patient WHERE status='open' AND type<>'inpatient'` | زيارة مفتوحة واحدة |
+| `invoice_items_reference_uq (reference_type, reference_id)` | منع تحصيل الخدمة مرتين |
+| `admissions_one_active_per_bed` / `_per_patient` | منع سرير/تنويم مزدوج |
+| `drug_batches.qty_on_hand >= 0` | منع مخزون سالب |
+| `payments.amount > 0` + منع الدفع الزائد في الخدمة (`FOR UPDATE`) | سلامة الرصيد |
+| `clinical_notes` / `lab_result_amendments` / `stock_movements` / `audit_log` append-only | عدم فقد التاريخ |
+| `medication_administrations` ملحق فقط (trigger يرفض UPDATE/DELETE) + `mar_one_record_per_slot (prescription_item_id, scheduled_for)` | سجل إعطاء غير قابل للتحريف وجرعة واحدة لكل فترة |
+| `shift_handovers` يرفض UPDATE بعد الكتابة إلا لتسجيل الاستلام (`handover_guard`) | ثبات محتوى تسليم المناوبة |
+| `imaging_reports` يمنع تعديل التقرير بعد الاعتماد (`report_guard`) | ثبات التقرير المعتمد |
+| `surgical_checklists` / `anesthesia_records` / `pacu_records` ملحق فقط، و`surgical_cases` مغلقة بعد الإكمال أو الإلغاء | ثبات السجل الجراحي وقوائم السلامة |
+| `UNIQUE (theatre_id, scheduled_at)` + فحص تقاطع الأوقات في الـAPI | منع جدولة عمليتين في غرفة واحدة |
+| `icu_observations` / `icu_ventilator_settings` / `icu_scores` ملحق فقط، وإقامة العناية مجمّدة بعد الإغلاق، وفهرس فريد لإقامة نشطة لكل تنويم/سرير | سلامة ملف العناية المركزة ومنع الازدواج |
+| `blood_units` حالة محددة + `expires_at > collected_at` + `UNIQUE (facility_id, unit_no)` | صلاحية الوحدة وعدم تكرار رقمها |
+| `blood_crossmatches` / `blood_transfusions` ملحق فقط (trigger) و`UNIQUE (unit_id)` على كل منهما | فحص توافق واحد ونقل واحد لكل وحدة، ومنع تحريف القرار |
+| `blood_transfusions` مدقق ثانٍ مختلف إلزامي (`second_checker_id <> started_by`) | فصل المهام عند السرير |
+| `blood_reactions` واحد لكل نقل، ويُقفل بعد المراجعة (`blood_reaction_review_guard`) | عدم تكرار/تعديل تقرير التفاعل |
+| `blood_requests` لا يُصدَر إلا بعد حجز وحدة متوافقة (فحص في الـAPI) وفهرس طلب مفتوح لكل مريض | تسلسل آمن ومنع الطلبات المتعارضة |
+| `nutrition_screenings` / `nutrition_assessments` / `nutrition_followups` ملحق فقط، وأمر التغذية لا يُعدّل بعد إصداقه ويُوقف فقط (`nutrition_diet_order_guard`) | سلامة القرار الغذائي |
+| `nutrition_one_active_diet` (أمر نشط واحد لكل تنويم) و`nutrition_one_active_tube_per_route` | منع أوامر متعارضة |
+| `cssd_pack_guard` مصفوفة انتقالات صارمة (dirty→washing→packed→sterilizing→released→issued→used→returned→dirty بدورة +1، والحجز/السحب حالات سلامة)، ومنع حذف الحزم أو تغيير هويتها أو عدّادها خارج إعادة الاستلام؛ `cssd_pack_open_cycle` نسخة قائمة واحدة لكل طقم | سلامة دورة التعقيم وتتبع الحزمة |
+| `cssd_load_guard` الدورة المكتملة/المعتمدة غير قابلة للتعديل إلا حقول السحب، ومنع إعادة تشغيل دورة منتهية، و`CHECK (approved_by <> operator_id)` مع تحقق إضافي في الـAPI | فصل مهام الاعتماد |
+| `infection_isolation_guard` أمر العزل لا يُحذف، ولا يُغلق إلا بسبب، والمغلق غير قابل للتعديل؛ فهرس فريد لعزل نشط واحد لكل مريض | سلامة قرار العزل |
+| `infection_case_guard` الحالة تُراجع مرة واحدة `suspected→confirmed/excluded` مع مراجع وملاحظة، ثم تُجمّد؛ `hand_hygiene_guard` يمنع أي تعديل/حذف للملاحظات | دقة الترصد ودليل التدقيق |
+| `nutrition_trays` انتقالات حالة صارمة (ordered→prepared→delivered→consumed/refused) والصينية المقفلة لا تُعدّل | سلامة دورة الوجبة ووقت الاستهلاك |
+| `hash_version` على `audit_log` | تطور خوارزمية السلسلة دون إبطال صامت |
+
+## معايير الترميز المستخدمة
+
+- **ICD-10**: حقل `icd10_code` مع وصف حر (لا تحميل كامل لمفردات ICD-10-CM؛ التحقق من صحة الرمز غير منفذ).
+- **LOINC**: `lab_tests.code` يحمل رموز LOINC (مجموعة تجريبية صغيرة: 718-7، 6690-2، 2345-7، 2160-0، 4548-4).
+- **FHIR R4**: واجهة قراءة جزئية (Patient/Observation) وليست تنفيذًا معتمدًا.
+- **SNOMED CT / DICOM**: غير مستخدمة/غير منفذة (تتطلب ترخيصًا/تكاملًا).
+- **التعقيم ومكافحة العدوى**: `precaution`, `case_type`, `moment`, `category`, `method`, `packaging`, `status` قيم CHECK ثابتة وليست مفردات SNOMED/LOINC؛ لا توجد جداول أجهزة تعقيم أو تتبع أدوات فردية (الأداة تُوصف بالعدد داخل الطقم)؛ الصلاحية تُحسب من مدة افتراضية موثقة في الـAPI.
+- **التغذية**: لا تستخدم مفردات SNOMED/NCPT؛ غذاء وتقييدات حقول CHECK ثابتة، وحساب الأهداف تقديري حسب الوزن.
+- **بنك الدم**: لا يستخدم ترميز ISBT 128 ولا مفردات فصائل معقدة؛ الحقول `component` و`blood_type` مجموعات محددة بقيد CHECK، وقرار التوافق من جدول ABO/Rh ثابت في `modules/bloodbank/routes.ts` (بلا أجسام مضادة أو معايرة عيار).

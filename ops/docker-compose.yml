@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hms
+      POSTGRES_USER: hms_owner
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set in .env}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hms_owner -d hms"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Not published: only reachable on the internal network.
+    expose: ["5432"]
+
+  api:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile
+    restart: unless-stopped
+    env_file: ../.env.production
+    environment:
+      DB_MODE: postgres
+      DATABASE_URL: postgres://hms_owner:${POSTGRES_OWNER_PASSWORD}@db:5432/hms
+      NODE_ENV: production
+      PORT: 8080
+      HOST: 0.0.0.0
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports: ["8080:8080"]
+
+  backup:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_OWNER_PASSWORD:?set in .env}
+      AGE_RECIPIENT: ${AGE_RECIPIENT:?public key for backup encryption}
+    volumes:
+      - ./backups:/backups
+      - ./backup.sh:/backup.sh:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do /bin/sh /backup.sh || echo 'backup failed'; sleep 86400; done"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:

@@ -1,0 +1,68 @@
+import type { FastifyInstance } from 'fastify';
+import { requireAuth } from '../../auth/context';
+import { withTenant } from '../../lib/tenant';
+
+/** Single source of truth for honest module delivery status shown in the UI. */
+export const MODULE_STATUS = [
+  { key: 'patients', ar: 'إدارة المرضى والسجل الطبي', status: 'implemented', note: 'تسجيل، بحث، حساسية، أمراض مزمنة، دمج مدقق، سجل اطلاع' },
+  { key: 'appointments', ar: 'الاستقبال والمواعيد', status: 'implemented', note: 'حجز، منع التعارض، حضور، إلغاء، قائمة انتظار' },
+  { key: 'opd', ar: 'العيادات الخارجية', status: 'implemented', note: 'زيارات، علامات حيوية، SOAP، تشخيص ICD-10، أوامر، وصفات، إغلاق' },
+  { key: 'labs', ar: 'المختبرات', status: 'implemented', note: 'طلب، عينة، نتيجة، قيم حرجة، اعتماد منفصل، تصحيح مدقق' },
+  { key: 'pharmacy', ar: 'الصيدلية', status: 'implemented', note: 'صرف FEFO، مخزون ودفعات، تحذير حساسية/تداخل، منع التكرار' },
+  { key: 'billing', ar: 'الفوترة والمدفوعات', status: 'implemented', note: 'فواتير تلقائية، دفع idempotent، إلغاء مدقق' },
+  { key: 'insurance', ar: 'التأمين', status: 'partial', note: 'بوليصات ومطالبات داخلية؛ لا يوجد ربط إلكتروني بجهة تأمين' },
+  { key: 'inpatient', ar: 'التنويم وإدارة الأسرة', status: 'implemented', note: 'تنويم بأمر طبيب، تخصيص سرير، نقل، خروج بملخص، احتساب أيام الإقامة، حالات الأسرّة' },
+  { key: 'emergency', ar: 'الطوارئ والفرز', status: 'implemented', note: 'لوحة فرز ESI 1-5، وصول مجهول الهوية مع مطابقة لاحقة، إعادة فرز مسببة، تحويل للتنويم أو خروج/تحويل بملخص' },
+  { key: 'nursing', ar: 'التمريض', status: 'implemented', note: 'لوحة أسرّة، سجل إعطاء أدوية (MAR) بحقوق الإعطاء الخمسة وشاهد للأدوية عالية الخطورة، خطط رعاية بمهام مجدولة، وتسليم مناوبة SBAR' },
+  { key: 'radiology', ar: 'الأشعة والتقارير', status: 'partial', note: 'طلب وتنفيذ وتقرير معتمد ونتائج حرجة — لا يوجد تكامل DICOM/PACS فعلي بعد' },
+  { key: 'surgery', ar: 'العمليات والتخدير', status: 'implemented', note: 'جدولة غرف العمليات بمنع التعارض، قوائم التحقق العالمية (WHO) قبل التخدير وقبل الشق وبعد العملية، سجل تخدير ملحق، عدّ الأدوات والإبر، وإفاقة ألدريتي مع رسوم العملية والتخدير' },
+  { key: 'icu', ar: 'العناية المركزة', status: 'implemented', note: 'إقامة عناية على سرير ICU، سجل علامات حيوية وRASS/GCS ملحق، إعدادات تنفس صناعي بإصدارات، حزمة رعاية يومية، ودرجة SOFA محسوبة على الخادم' },
+  { key: 'bloodbank', ar: 'بنك الدم', status: 'implemented', note: 'متبرعون مفحوصون، مخزون وحدات بتاريخ صلاحية، طلب طبي، فحص توافق ABO/Rh محسوب على الخادم، صرف، نقل بمدقق ثانٍ، وتتبع كامل مع تفاعلات وحجر الوحدة' },
+  { key: 'nutrition', ar: 'التغذية الطبية', status: 'implemented', note: 'فحص تغذية تمريضي، تقييم وأهداف أخصائي التغذية، أمر تغذية مُتحقَّق من الحساسية، توليد صواني الوجبات وتتبع التحضير والتسليم والاستهلاك، وتغذية أنبوبية/وريدية بأوامر مُصدَرة' },
+  { key: 'cssd', ar: 'التعقيم ومكافحة العدوى', status: 'implemented', note: 'دورة تعقيم كاملة (استلام ملوّث → غسل → تغليف → دورة تعقيم بمؤشرات → اعتماد من شخص آخر → إفراج بصلاحية → صرف وربط بالعملية → إعادة), سحب/حجر عند فشل المؤشر، وأوامر عزل وترصد عدوى مرتبطة بالرعاية ومراقبة نظافة الأيدي' },
+  { key: 'hr', ar: 'الموارد البشرية', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
+  { key: 'procurement', ar: 'المخازن والمشتريات', status: 'partial', note: 'مخزون أدوية وحركات فقط' },
+  { key: 'assets', ar: 'الأصول والصيانة', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
+  { key: 'quality', ar: 'الجودة والامتثال', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
+  { key: 'finance', ar: 'الإدارة المالية', status: 'partial', note: 'تحصيل وفواتير؛ دفتر أستاذ ومراكز تكلفة غير مكتملة' },
+  { key: 'reports', ar: 'التقارير والتصدير', status: 'partial', note: 'لوحة مؤشرات وتصدير CSV مدقق؛ PDF عبر الطباعة' },
+  { key: 'multifacility', ar: 'إدارة الفروع', status: 'implemented', note: 'عزل بيانات بـ RLS وتبديل منشأة حسب العضوية' },
+  { key: 'portal', ar: 'بوابة المرضى', status: 'partial', note: 'اطلاع على المواعيد والنتائج المعتمدة والفواتير؛ لا حجز/دفع إلكتروني' },
+  { key: 'integrations', ar: 'التكامل والإشعارات', status: 'partial', note: 'FHIR R4 جزئي، outbox إشعارات بدون مزود بريد/SMS' },
+  { key: 'analytics', ar: 'التحليلات', status: 'implemented', note: 'مؤشرات تشغيلية حقيقية من قاعدة البيانات' },
+  { key: 'radiology_orders', ar: 'طلبات الأشعة', status: 'implemented', note: 'طلب، تنفيذ، تقرير اعتماد، ورسوم' },
+] as const;
+
+export async function metaRoutes(app: FastifyInstance) {
+  app.get('/api/meta/modules', async (req) => {
+    requireAuth(req);
+    return { modules: MODULE_STATUS };
+  });
+
+  app.get('/api/meta/bootstrap', async (req) => {
+    const auth = requireAuth(req);
+    return withTenant(auth, async (db) => {
+      const [departments, doctors, tests, drugs, pricing] = await Promise.all([
+        db.query(`SELECT id, code, name_ar, name_en, dept_type FROM departments WHERE is_active = true ORDER BY name_ar`),
+        db.query(
+          `SELECT DISTINCT u.id, u.full_name_ar, ur.department_id, ur.role_id
+             FROM users u JOIN user_roles ur ON ur.user_id = u.id
+            WHERE ur.facility_id = $1 AND u.is_active = true AND ur.role_id IN ('physician','department_manager','surgeon','anesthesiologist')
+            ORDER BY u.full_name_ar`,
+          [auth.activeFacilityId],
+        ),
+        db.query(`SELECT code, name_ar, name_en, specimen, unit, ref_low, ref_high, price FROM lab_tests ORDER BY name_ar`),
+        db.query(`SELECT id, code, name_ar, name_en, form, strength, price FROM drugs WHERE is_active = true ORDER BY name_ar`),
+        db.query(`SELECT key, value FROM app_settings WHERE facility_id = $1`, [auth.activeFacilityId]),
+      ]);
+      return {
+        departments: departments.rows,
+        doctors: doctors.rows,
+        labTests: tests.rows,
+        drugs: drugs.rows,
+        pricing: Object.fromEntries(pricing.rows.map((r: any) => [r.key, r.value])),
+        serverTime: new Date().toISOString(),
+      };
+    });
+  });
+}
