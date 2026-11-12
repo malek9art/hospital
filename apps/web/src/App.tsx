@@ -68,6 +68,8 @@ function LoginPage({ onLogin, notice }: { onLogin: (m: Me) => void; notice?: str
     ['بنك الدم', 'bloodbank@demo.hms', 'Blood#Demo2026'],
     ['أخصائي تغذية', 'dietitian@demo.hms', 'Nutrition#Demo2026'],
     ['خدمات التغذية', 'kitchen@demo.hms', 'Kitchen#Demo2026'],
+    ['فني تعقيم', 'cssd@demo.hms', 'CSSD#Demo2026'],
+    ['مكافحة العدوى', 'infection@demo.hms', 'Infection#Demo2026'],
   ];
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
