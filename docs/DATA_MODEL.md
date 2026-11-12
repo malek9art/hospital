@@ -1,7 +1,7 @@
 # نموذج البيانات وقاعدة البيانات
 
 - **المحرك:** PostgreSQL 18 (التطوير عبر PGlite بنفس المحرك، والإنتاج عبر `pg`).
-- **الترحيلات:** `db/migrations/*.sql` (001..015) تُطبَّق بترتيب اسمي، وتُسجَّل في `schema_migrations` مع checksum؛ تعديل ملف مطبَّق يوقف الترحيل (يمنع الانحراف).
+- **الترحيلات:** `db/migrations/*.sql` (001..016) تُطبَّق بترتيب اسمي، وتُسجَّل في `schema_migrations` مع checksum؛ تعديل ملف مطبَّق يوقف الترحيل (يمنع الانحراف).
 - **الأدوار:** `hms_owner` (ترحيلات فقط) / `hms_app` (عمل الموظفين، RLS مفروض) / `hms_portal` (المريض، RLS بمستوى المريض).
 - **الجلسة:** كل معاملة تُنفّذ `SET LOCAL ROLE` + `set_config('app.facility_ids'|'app.patient_id', …, true)` فلا تتسرب الصلاحيات بين الطلبات.
 
@@ -47,7 +47,7 @@ erDiagram
   USERS ||--o{ BREAK_GLASS_GRANTS : emergency
 ```
 
-## الجداول (73)
+## الجداول (79)
 
 | المجموعة | الجداول |
 |---|---|
@@ -64,6 +64,7 @@ erDiagram
 | العمليات والتخدير | `operating_theatres`, `surgical_cases`, `surgical_checklists`, `anesthesia_records`, `pacu_records` |
 | العناية المركزة | `icu_stays`, `icu_observations`, `icu_ventilator_settings`, `icu_daily_goals`, `icu_scores` |
 | بنك الدم | `blood_donors`, `blood_units`, `blood_requests`, `blood_crossmatches`, `blood_transfusions`, `blood_reactions` |
+| التغذية الطبية | `nutrition_screenings`, `nutrition_assessments`, `nutrition_diet_orders`, `nutrition_trays`, `nutrition_tube_orders`, `nutrition_followups` |
 | عرض للمريض | `portal_clinicians` (VIEW) |
 
 ## قيود سلامة مهمة
@@ -89,6 +90,9 @@ erDiagram
 | `blood_transfusions` مدقق ثانٍ مختلف إلزامي (`second_checker_id <> started_by`) | فصل المهام عند السرير |
 | `blood_reactions` واحد لكل نقل، ويُقفل بعد المراجعة (`blood_reaction_review_guard`) | عدم تكرار/تعديل تقرير التفاعل |
 | `blood_requests` لا يُصدَر إلا بعد حجز وحدة متوافقة (فحص في الـAPI) وفهرس طلب مفتوح لكل مريض | تسلسل آمن ومنع الطلبات المتعارضة |
+| `nutrition_screenings` / `nutrition_assessments` / `nutrition_followups` ملحق فقط، وأمر التغذية لا يُعدّل بعد إصداقه ويُوقف فقط (`nutrition_diet_order_guard`) | سلامة القرار الغذائي |
+| `nutrition_one_active_diet` (أمر نشط واحد لكل تنويم) و`nutrition_one_active_tube_per_route` | منع أوامر متعارضة |
+| `nutrition_trays` انتقالات حالة صارمة (ordered→prepared→delivered→consumed/refused) والصينية المقفلة لا تُعدّل | سلامة دورة الوجبة ووقت الاستهلاك |
 | `hash_version` على `audit_log` | تطور خوارزمية السلسلة دون إبطال صامت |
 
 ## معايير الترميز المستخدمة
@@ -97,4 +101,5 @@ erDiagram
 - **LOINC**: `lab_tests.code` يحمل رموز LOINC (مجموعة تجريبية صغيرة: 718-7، 6690-2، 2345-7، 2160-0، 4548-4).
 - **FHIR R4**: واجهة قراءة جزئية (Patient/Observation) وليست تنفيذًا معتمدًا.
 - **SNOMED CT / DICOM**: غير مستخدمة/غير منفذة (تتطلب ترخيصًا/تكاملًا).
+- **التغذية**: لا تستخدم مفردات SNOMED/NCPT؛ غذاء وتقييدات حقول CHECK ثابتة، وحساب الأهداف تقديري حسب الوزن.
 - **بنك الدم**: لا يستخدم ترميز ISBT 128 ولا مفردات فصائل معقدة؛ الحقول `component` و`blood_type` مجموعات محددة بقيد CHECK، وقرار التوافق من جدول ABO/Rh ثابت في `modules/bloodbank/routes.ts` (بلا أجسام مضادة أو معايرة عيار).

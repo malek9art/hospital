@@ -25,6 +25,7 @@ import { nursingRoutes } from './modules/nursing/routes';
 import { surgeryRoutes } from './modules/surgery/routes';
 import { icuRoutes } from './modules/icu/routes';
 import { bloodbankRoutes } from './modules/bloodbank/routes';
+import { nutritionRoutes } from './modules/nutrition/routes';
 import { dashboardRoutes } from './modules/dashboard/routes';
 import { adminRoutes } from './modules/admin/routes';
 import { portalRoutes } from './modules/portal/routes';
@@ -215,6 +216,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(surgeryRoutes);
   await app.register(icuRoutes);
   await app.register(bloodbankRoutes);
+  await app.register(nutritionRoutes);
   await app.register(reportRoutes);
   await app.register(dashboardRoutes);
   await app.register(adminRoutes);

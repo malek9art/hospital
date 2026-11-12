@@ -181,6 +181,26 @@
 
 **فصل المهام:** طلب الدم (`bloodbank.request`) ≠ فحص التوافق والصرف (`bloodbank.crossmatch`/`bloodbank.issue`، تقني بنك الدم) ≠ النقل (`bloodbank.transfuse`، تمريض) مع مدقق ثانٍ مختلف. كل خطوة تُسجَّل في التدقيق، وسجلات المطابقة والنقل والتفاعل ملحقة (لا تُعدّل).
 
+## التغذية الطبية
+
+| Method | Path | ملاحظات |
+|---|---|---|
+| GET | `/api/nutrition/board` | `nutrition.read` — المنوّمون مع آخر فحص ونقاطه ومستوى الخطر، أمر التغذية النشط وقيوده، أمر الأنبوب، حالة صواني اليوم، وإجماليات (منوّمون/خطر مرتفع/صائمون/بحاجة لفحص/بلا أمر) |
+| POST | `/api/nutrition/screenings` | `nutrition.screen` — `{admissionId, weightKg, heightCm, weightLossPct, intakeReduction, diseaseSeverity, actionTaken?}`؛ النقاط تُحسب على الخادم (وزن/BMU/تناول/شدة المرض/العمر)، ونتيجة متوسطة أو مرتفعة تتطلب إجراءً موثقًا |
+| POST | `/api/nutrition/assessments` | `nutrition.assess` — يتطلب فحصًا سابقًا؛ أهداف الطاقة/البروتين تُقترح حسب الوزن، وأي انحراف >٢٥٪ يتطلب `varianceReason` |
+| POST | `/api/nutrition/diet-orders` | `nutrition.order` — يتطلب تقييمًا، ويرفض الأمر إذا لم يستبعد كل حساسية غذائية مسجلة (`restrictions`)، ويوقف الأمر النشط السابق تلقائيًا |
+| POST | `/api/nutrition/diet-orders/:id/discontinue` | سبب ≥ ٥ أحرف |
+| POST | `/api/nutrition/diet-orders/:id/trays` | `{date?}` — يولّد ٤ صواني (إفطار/غداء/عشاء/خفيفة) بحصص ٢٥/٣٥/٣٠/١٠٪؛ إعادة التشغيل لا تُكرر (`skipped`) |
+| GET | `/api/nutrition/kitchen` | `nutrition.kitchen` — قائمة المطبخ لليوم: المريض والجناح والحمية والقيود والطاقة والحالة (بلا حقول سريرية) |
+| POST | `/api/nutrition/trays/:id/prepare` · `/deliver` | انتقالات صارمة: تحضير من «مطلوبة» فقط، وتسليم بعد التحضير فقط |
+| POST | `/api/nutrition/trays/:id/intake` | `nutrition.intake` — بعد التسليم فقط؛ `{consumedPct, refused?, notes?}` وتُحسب السعرات والبروتين المستهلكين من المخطط؛ الصينية تصبح مقفلة |
+| POST | `/api/nutrition/tube-orders` | `nutrition.tube` — `{route: ng/og/peg/pej/tpn/ppn, formulaName, kcalPerMl, proteinGPerL, rateMlHr, hoursPerDay}`؛ الحجم والسعرات تُحسب على الخادم، ومسار واحد نشط لكل تنويم |
+| POST | `/api/nutrition/tube-orders/:id/stop` | سبب ≥ ٥ أحرف + `completed?`؛ الوصفة نفسها لا تُعدّل (trigger) |
+| GET | `/api/nutrition/patients/:patientId` | الملف الغذائي: الحساسيات والقيود الإلزامية، الأمر النشط، الفحوص والتقييمات والأوامر والمتابعات، وصواني آخر يومين ونسبة الالتزام |
+| POST | `/api/nutrition/patients/:patientId/followups` | `nutrition.assess` — وزن/متوسط استهلاك/تحمل (جيد/جزئي/ضعيف) + ملاحظة ≥ ١٠ أحرف |
+
+**حدود:** لا قاعدة تراكيب غذائية ولا مخزون مطبخ ولا قائمة طعام؛ حصة الطاقة لكل وجبة ثابتة، والأهداف تقديرية حسب الوزن. نقاط الفحص أداة فرز (مستوحاة من NRS-2002) وليست جهازًا طبيًا معتمدًا.
+
 ## الإدارة والتدقيق
 
 `GET/POST/PATCH /api/admin/users`, `GET /api/admin/roles`, `GET/POST /api/admin/sessions[/:id/revoke]`, `GET /api/admin/facilities`, `GET /api/audit` (فلاتر), `GET /api/audit/verify` → `{ok,checked}`.

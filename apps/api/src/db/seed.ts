@@ -68,6 +68,13 @@ const PERMISSIONS: [string, string, string][] = [
   ['bloodbank.transfuse', 'bloodbank', 'بدء النقل والتحقق الثاني وإغلاقه'],
   ['bloodbank.reaction', 'bloodbank', 'الإبلاغ عن تفاعلات نقل الدم'],
   ['bloodbank.stock', 'bloodbank', 'تسجيل المتبرعين والوحدات واستبعادها'],
+  ['nutrition.read', 'nutrition', 'عرض لوحة التغذية وملف المريض الغذائي'],
+  ['nutrition.screen', 'nutrition', 'إجراء فحص خطر التغذية (تمريض)'],
+  ['nutrition.assess', 'nutrition', 'تقييم التغذية والمتابعة (أخصائي تغذية)'],
+  ['nutrition.order', 'nutrition', 'إصدار أمر التغذية وتوليد وجبات اليوم'],
+  ['nutrition.kitchen', 'nutrition', 'تحضير وتسليم صواني الوجبات'],
+  ['nutrition.intake', 'nutrition', 'تسجيل ما تناوله المريض'],
+  ['nutrition.tube', 'nutrition', 'أوامر التغذية الأنبوبية والوريدية وإيقافها'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -88,12 +95,14 @@ const ROLE_PERMS: Record<string, string[]> = {
   surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read'],
   anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read'],
   or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read'],
-  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction'],
-  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction'],
+  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake'],
+  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake'],
+  dietitian: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'nutrition.read', 'nutrition.assess', 'nutrition.order', 'nutrition.tube', 'report.read'],
+  kitchen_staff: ['patient.read', 'patient.chart.administrative', 'nutrition.kitchen'],
   blood_bank_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'bloodbank.read', 'bloodbank.crossmatch', 'bloodbank.issue', 'bloodbank.stock', 'bloodbank.reaction', 'report.read'],
   department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction'],
   physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request'],
-  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction'],
+  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.screen', 'nutrition.intake'],
   receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record'],
   records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export'],
   lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read'],
@@ -117,6 +126,8 @@ const ROLES: [string, string, string][] = [
   ['intensivist', 'طبيب عناية مركزة', 'Intensivist'],
   ['icu_nurse', 'تمريض عناية مركزة', 'ICU nurse'],
   ['blood_bank_tech', 'فني بنك دم', 'Blood bank technologist'],
+  ['dietitian', 'أخصائي تغذية', 'Clinical dietitian'],
+  ['kitchen_staff', 'موظف تغذية', 'Nutrition services'],
   ['receptionist', 'استقبال', 'Receptionist'],
   ['records_officer', 'السجلات الطبية', 'Medical records'],
   ['lab_tech', 'فني مختبر', 'Lab technician'],
@@ -194,6 +205,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     anesthesia: await hashPassword('Anesthesia#Demo2026'),
     icu: await hashPassword('ICU#Demo2026'),
     blood: await hashPassword('Blood#Demo2026'),
+    nutrition: await hashPassword('Nutrition#Demo2026'),
+    kitchen: await hashPassword('Kitchen#Demo2026'),
     reception: await hashPassword('Reception#Demo2026'),
     records: await hashPassword('Records#Demo2026'),
     lab: await hashPassword('Lab#Demo2026'),
@@ -217,6 +230,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['intensivist@demo.hms', 'د. فيصل الحربي', 'Dr. Faisal Alharbi', 'استشاري عناية مركزة', 'intensivist', password.icu, 'INP'],
     ['icunurse@demo.hms', 'أمل الجهني', 'Amal Aljohani', 'ممرضة عناية مركزة', 'icu_nurse', password.icu, 'INP'],
     ['bloodbank@demo.hms', 'نورة الحربي', 'Noura Alharbi', 'فنية بنك دم', 'blood_bank_tech', password.blood, 'LAB'],
+    ['dietitian@demo.hms', 'هيفاء الزهراني', 'Haifa Alzahrani', 'أخصائية تغذية علاجية', 'dietitian', password.nutrition, 'INP'],
+    ['kitchen@demo.hms', 'ماجد الشهري', 'Majed Alshehri', 'مسؤول خدمات التغذية', 'kitchen_staff', password.kitchen, 'INP'],
     ['reception@demo.hms', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', 'receptionist', password.reception, 'ADM'],
     ['records@demo.hms', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', 'records_officer', password.records, 'ADM'],
     ['lab@demo.hms', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', 'lab_tech', password.lab, 'LAB'],
@@ -732,6 +747,84 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     }
   }
 
+  // --------------------------------------------------------------- Nutrition --
+  // The ICU patient (A-) is screened, assessed and on a diabetic diet with a
+  // breakfast tray already delivered (so nursing can record intake) and the
+  // remaining trays for today still queued for the kitchen.
+  {
+    const nurse = userIds['nurse:nurse@demo.hms'];
+    const dietitian = userIds['dietitian:dietitian@demo.hms'];
+    const kitchen = userIds['kitchen_staff:kitchen@demo.hms'];
+    const adm = await db.query<{ id: string; patient_id: string; encounter_id: string }>(
+      `SELECT id, patient_id, encounter_id FROM admissions WHERE admission_no = 'ADM-000002'`,
+    );
+    const admission = adm.rows[0];
+    if (admission) {
+      const screeningId = crypto.randomUUID();
+      const bmi = 23.2;
+      await db.query(
+        `INSERT INTO nutrition_screenings (id, facility_id, patient_id, admission_id, encounter_id, screening_date,
+           weight_kg, height_cm, bmi, weight_loss_pct, intake_reduction, disease_severity, age_years, score,
+           risk_level, action_taken, notes, recorded_by, recorded_at)
+         VALUES ($1,$2,$3,$4,$5, current_date - 1, 74, 178.5, $6, 6, 'mild', 'moderate', 68, 6, 'high',
+                 'تحويل لأخصائي التغذية العلاجية خلال ٢٤ ساعة', 'نقص شهية منذ التنويم مع فقد وزن بسيط', $7,
+                 now() - interval '1 day')`,
+        [screeningId, facilityId, admission.patient_id, admission.id, admission.encounter_id, bmi, nurse],
+      );
+
+      const assessmentId = crypto.randomUUID();
+      await db.query(
+        `INSERT INTO nutrition_assessments (id, facility_id, patient_id, admission_id, screening_id,
+           weight_kg, height_cm, bmi, ideal_weight_kg, energy_target_kcal, protein_target_g, fluid_limit_ml,
+           recommended_energy_kcal, recommended_protein_g, nutrition_diagnosis, plan, assessed_by, assessed_at)
+         VALUES ($1,$2,$3,$4,$5, 74, 178.5, $6, 66.3, 1850, 89, 2000, 1850, 88.8,
+                 'سوء تغذية متوسط مع مرض حاد (قصور قلب وسكري) وفق فحص NRS-2002',
+                 'حمية سكرية ١٨٥٠ كيلوكالوري و٨٩ غرام بروتين موزعة على ثلاث وجبات ووجبة خفيفة، مع مراقبة السكر بعد الوجبات واستكمال الحساب اليومي للطاقة.',
+                 $7, now() - interval '1 day' + interval '2 hours')`,
+        [assessmentId, facilityId, admission.patient_id, admission.id, screeningId, bmi, dietitian],
+      );
+
+      const dietOrderId = crypto.randomUUID();
+      await db.query(
+        `INSERT INTO nutrition_diet_orders (id, facility_id, patient_id, admission_id, encounter_id, order_no,
+           assessment_id, diet_type, texture, restrictions, energy_target_kcal, protein_target_g, fluid_limit_ml,
+           allergen_snapshot, ordered_by, started_at, notes)
+         VALUES ($1,$2,$3,$4,$5,'NUT-000001',$6,'diabetic','normal','{diabetic,low_sodium}',1850,89,2000,
+                 '[]'::jsonb, $7, now() - interval '1 day' + interval '2 hours',
+                 'تجنّب السكريات البسيطة ومتابعة سكر الدم قبل الوجبات')`,
+        [dietOrderId, facilityId, admission.patient_id, admission.id, admission.encounter_id, assessmentId, dietitian],
+      );
+
+      const share: [string, number, number][] = [['breakfast', 25, 0], ['lunch', 35, 1], ['dinner', 30, 2], ['snack', 10, 3]];
+      let trayNo = 1;
+      for (const [meal, pct, idx] of share) {
+        const trayId = crypto.randomUUID();
+        const delivered = idx === 0;
+        await db.query(
+          `INSERT INTO nutrition_trays (id, facility_id, diet_order_id, patient_id, admission_id, tray_no, tray_date,
+             meal, status, kcal_planned, protein_planned_g, prepared_by, prepared_at, delivered_by, delivered_at, notes)
+           VALUES ($1,$2,$3,$4,$5,$6, current_date, $7, $8, $9, $10, $11, now() - interval '3 hours',
+             $12, $13, $14)`,
+          [trayId, facilityId, dietOrderId, admission.patient_id, admission.id, `TRY-${String(trayNo++).padStart(6, '0')}`,
+            meal, delivered ? 'delivered' : 'ordered', Math.round((1850 * pct) / 100),
+            Math.round(((89 * pct) / 100) * 10) / 10, kitchen, delivered ? kitchen : null,
+            delivered ? new Date().toISOString() : null, `حصة ${pct}% من هدف اليوم`],
+        );
+      }
+
+      // A second in-house patient with a lactose allergy, so the API can prove
+      // that a diet order without the matching restriction is refused.
+      const lactoseAllergy = await db.query(`SELECT id FROM patient_allergies WHERE patient_id = $1`, [patientIds[2]]);
+      if (!lactoseAllergy.rows[0]) {
+        await db.query(
+          `INSERT INTO patient_allergies (id, facility_id, patient_id, allergen, reaction, severity, noted_by)
+           VALUES ($1,$2,$3,'حليب البقر','إسهال وغازات بعد تناول الحليب','moderate',$4)`,
+          [crypto.randomUUID(), facilityId, patientIds[2], userIds['physician:dr.ahmed@demo.hms']],
+        );
+      }
+    }
+  }
+
   // -------------------------------------------------------------- Blood bank --
   // Synthetic donations covering compatible and deliberately incompatible
   // units, plus one open request for the ICU patient (A-) so the cross-match,
@@ -806,6 +899,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['blood_donor', 'blood_donors', 'donor_no', 'DNR'],
     ['blood_unit', 'blood_units', 'unit_no', 'BGU'],
     ['blood_request', 'blood_requests', 'request_no', 'BLR'],
+    ['nutrition_order', 'nutrition_diet_orders', 'order_no', 'NUT'],
+    ['nutrition_tray', 'nutrition_trays', 'tray_no', 'TRY'],
   ];
   for (const [name, table, column, prefix] of sequenceSources) {
     const max = await db.query<{ next: number }>(

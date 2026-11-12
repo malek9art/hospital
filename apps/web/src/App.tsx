@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'icu' | 'bloodbank' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'icu' | 'bloodbank' | 'nutrition' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -12,6 +12,7 @@ const STATUS: Record<string, string> = {
   booked: 'محجوز', checked_in: 'حضر', in_consultation: 'في الاستشارة', completed: 'مكتمل', cancelled: 'ملغى', no_show: 'لم يحضر',
   open: 'مفتوحة', closed: 'مغلقة', ordered: 'مطلوب', collected: 'تم جمع العينة', resulted: 'نتيجة مسجلة', verified: 'معتمدة',
   issued: 'صادرة', partially_dispensed: 'صرف جزئي', dispensed: 'مصروفة', paid: 'مدفوعة', partially_paid: 'مدفوعة جزئيًا', void: 'ملغاة',
+  prepared: 'محضّرة', delivered: 'مُسلَّمة', consumed: 'مستهلكة', refused: 'مرفوضة', stopped: 'متوقفة',
   available: 'متاحة', reserved: 'محجوزة', transfused: 'مُنقلة', discarded: 'مستبعدة',
   pending: 'قيد الانتظار', crossmatched: 'مطابقة', stopped_reaction: 'أُوقف لتفاعل', stopped_other: 'أُوقف لسبب آخر',
 };
@@ -59,6 +60,8 @@ function LoginPage({ onLogin, notice }: { onLogin: (m: Me) => void; notice?: str
     ['محاسب', 'accountant@demo.hms', 'Account#Demo2026'], ['مدير النظام', 'admin@demo.hms', 'Admin#Demo2026'],
     ['مدقق', 'auditor@demo.hms', 'Auditor#Demo2026'], ['مريض', 'patient@demo.hms', 'Patient#Demo2026'],
     ['بنك الدم', 'bloodbank@demo.hms', 'Blood#Demo2026'],
+    ['أخصائي تغذية', 'dietitian@demo.hms', 'Nutrition#Demo2026'],
+    ['خدمات التغذية', 'kitchen@demo.hms', 'Kitchen#Demo2026'],
   ];
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
@@ -1988,6 +1991,288 @@ function BloodBank({ m }: { m: Me }) {
   );
 }
 
+// --------------------------------------------------------------- Nutrition ---
+const MEAL_LABELS: Record<string, string> = { breakfast: 'إفطار', lunch: 'غداء', dinner: 'عشاء', snack: 'وجبة خفيفة' };
+const DIET_LABELS: Record<string, string> = {
+  regular: 'عادي', diabetic: 'سكري', renal: 'كلوي', low_sodium: 'قليل الصوديوم', soft: 'لين',
+  liquid: 'سوائل صافية', npo: 'صائم (NPO)', enteral: 'تغذية أنبوبية', parenteral: 'تغذية وريدية',
+};
+const RISK_LABELS: Record<string, string> = { low: 'منخفض', medium: 'متوسط', high: 'مرتفع' };
+const RESTRICTION_LABELS: Record<string, string> = {
+  lactose_free: 'خالٍ من اللاكتوز', gluten_free: 'خالٍ من الغلوتين', nut_free: 'خالٍ من المكسرات',
+  egg_free: 'خالٍ من البيض', fish_free: 'خالٍ من السمك', soy_free: 'خالٍ من الصويا',
+  diabetic: 'سكري', low_sodium: 'قليل الصوديوم', renal: 'كلوي', low_fat: 'قليل الدهون',
+};
+const TOLERANCE_LABELS: Record<string, string> = { good: 'جيد', partial: 'جزئي', poor: 'ضعيف' };
+const TUBE_LABELS: Record<string, string> = {
+  ng: 'أنفي معدي', og: 'فموي معدي', peg: 'فغر معدة', pej: 'فغر صائم', tpn: 'وريدي كلي', ppn: 'وريدي جزئي',
+};
+const TRAY_STATUS: Record<string, string> = {
+  ordered: 'مطلوبة', prepared: 'محضّرة', delivered: 'مُسلَّمة', consumed: 'مستهلكة', refused: 'مرفوضة', cancelled: 'ملغاة',
+};
+
+function Nutrition({ m }: { m: Me }) {
+  const [board, setBoard] = useState<any>(null);
+  const [kitchen, setKitchen] = useState<any>(null);
+  const [file, setFile] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+  const [screen, setScreen] = useState<any>({ admissionId: '', weightKg: '', heightCm: '', weightLossPct: '0', intakeReduction: 'none', diseaseSeverity: 'none', actionTaken: '', notes: '' });
+  const [assess, setAssess] = useState<any>({ admissionId: '', weightKg: '', heightCm: '', energyTargetKcal: '', proteinTargetG: '', fluidLimitMl: '', nutritionDiagnosis: '', plan: '', varianceReason: '' });
+  const [order, setOrder] = useState<any>({ admissionId: '', dietType: 'diabetic', texture: '', restrictions: [] as string[], notes: '' });
+  const [tube, setTube] = useState<any>({ admissionId: '', route: 'ng', formulaName: '', kcalPerMl: '1', proteinGPerL: '40', rateMlHr: '40', hoursPerDay: '16', notes: '' });
+  const [intake, setIntake] = useState<any>({ pct: '60', refused: false, notes: '' });
+  const [follow, setFollow] = useState<any>({ weightKg: '', intakePctAvg: '', tolerance: 'good', note: '' });
+  const isDietitian = has(m, 'nutrition.assess');
+  const admissions = board?.items ?? [];
+
+  async function load() {
+    try {
+      const b = await api<any>('/api/nutrition/board');
+      setBoard(b);
+      if (file) setFile(await api<any>(`/api/nutrition/patients/${file.patient.id}`));
+    } catch (e: any) { setErr(e.message); }
+  }
+  async function loadKitchen() {
+    if (!has(m, 'nutrition.kitchen')) return;
+    try { setKitchen(await api<any>('/api/nutrition/kitchen')); } catch { /* kitchen only */ }
+  }
+  useEffect(() => { load(); loadKitchen(); }, []);
+  async function refresh() { await load(); await loadKitchen(); }
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); await refresh(); } catch (e: any) { setErr(e.message + (e.details ? ` — ${JSON.stringify(e.details)}` : '')); }
+  }
+  async function open(row: any) {
+    setErr(null); setOk(null);
+    try {
+      const f = await api<any>(`/api/nutrition/patients/${row.patient_id}`);
+      setFile(f);
+      setScreen({ ...screen, admissionId: row.admission_id, weightKg: row.weight_kg ?? '', heightCm: '' });
+      setAssess({ ...assess, admissionId: row.admission_id, weightKg: row.weight_kg ?? '' });
+      setOrder({ ...order, admissionId: row.admission_id });
+      setTube({ ...tube, admissionId: row.admission_id });
+    } catch (e: any) { setErr(e.message); }
+  }
+
+  const selectedAdmission = admissions.find((a: any) => a.admission_id === screen.admissionId);
+
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+
+      {board && <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {[['منوّمون', board.totals.inpatients], ['خطر مرتفع', board.totals.high_risk], ['صائمون', board.totals.npo], ['بحاجة لفحص', board.totals.needs_screening], ['بلا أمر تغذية', board.totals.without_diet]].map(([l, v]) => (
+          <div key={String(l)} className="card p-3"><p className="text-xs text-slate-500">{l}</p><p className="text-xl font-bold">{v as any}</p></div>
+        ))}
+      </div>}
+
+      {board && <Card title="لوحة التغذية العلاجية">
+        <div className="overflow-x-auto"><table className="w-full min-w-[1000px]"><thead><tr>
+          <th className="th">المريض</th><th className="th">الجناح</th><th className="th">آخر فحص</th><th className="th">الخطر</th><th className="th">أمر التغذية</th><th className="th">التغذية الأنبوبية</th><th className="th">وجبات اليوم</th><th className="th"></th>
+        </tr></thead><tbody>
+          {admissions.map((a: any) => <tr key={a.admission_id} className={a.risk_level === 'high' ? 'bg-rose-50/60' : a.needs_screening ? 'bg-amber-50/50' : ''}>
+            <td className="td text-xs">{a.patient_name}<span className="block text-slate-400">{a.mrn} · {a.admission_no} · {a.age_years} سنة</span></td>
+            <td className="td text-xs">{a.ward_name ?? '—'} {a.room_no ? `${a.room_no}/${a.bed_no}` : ''}</td>
+            <td className="td text-xs">{a.screening_date ? <>{day(a.screening_date)}<span className="block text-slate-400">BMI {Number(a.bmi)} · نقاط {a.screening_score}</span></> : <span className="text-amber-700">لم يُفحص</span>}</td>
+            <td className="td text-xs">{a.risk_level ? <span className={a.risk_level === 'high' ? 'badge bg-rose-100 text-rose-700' : a.risk_level === 'medium' ? 'badge bg-amber-100 text-amber-700' : 'badge bg-emerald-100 text-emerald-700'}>{RISK_LABELS[a.risk_level]}</span> : '—'}</td>
+            <td className="td text-xs">{a.diet_type ? <>{a.diet_ar}<span className="block text-slate-400">{a.order_no} · {(a.restriction_labels ?? []).join(' · ') || 'بلا قيود'}</span></> : <span className="text-slate-400">لا يوجد</span>}</td>
+            <td className="td text-xs">{a.tube_route ? <>{TUBE_LABELS[a.tube_route]}<span className="block text-slate-400">{a.formula_name} · {a.kcal_day} سعرة</span></> : '—'}</td>
+            <td className="td text-xs">{a.trays_total ? <>{a.trays_done}/{a.trays_total} منجز<span className="block text-slate-400">{a.trays_pending} قيد التنفيذ</span></> : '—'}</td>
+            <td className="td"><button className="btn-ghost text-xs" onClick={() => open(a)}>فتح الملف</button></td>
+          </tr>)}
+          {admissions.length === 0 && <tr><td className="td text-slate-500" colSpan={8}>لا مرضى منوّمين.</td></tr>}
+        </tbody></table></div>
+      </Card>}
+
+      {kitchen && <Card title="صواني المطبخ اليوم">
+        <div className="flex flex-wrap gap-3 text-xs text-slate-600 mb-2">
+          <span>مطلوبة: <b>{kitchen.totals.ordered}</b></span><span>محضّرة: <b>{kitchen.totals.prepared}</b></span><span>مُسلَّمة: <b>{kitchen.totals.delivered}</b></span>
+          {board?.trays && <span>متوسط الاستهلاك: <b>{board.trays.avg_intake_pct}%</b></span>}
+        </div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr>
+          <th className="th">الصينية</th><th className="th">الوجبة</th><th className="th">المريض</th><th className="th">الحمية</th><th className="th">الطاقة</th><th className="th">الحالة</th><th className="th"></th>
+        </tr></thead><tbody>
+          {kitchen.items.map((t: any) => <tr key={t.id}>
+            <td className="td text-xs font-mono">{t.tray_no}</td>
+            <td className="td text-xs">{t.meal_ar}</td>
+            <td className="td text-xs">{t.patient_name}<span className="block text-slate-400">{t.mrn} · {t.ward_name ?? ''} {t.room_no ?? ''}</span></td>
+            <td className="td text-xs">{t.diet_ar}<span className="block text-slate-400">{(t.restriction_labels ?? []).join(' · ') || t.texture || ''}</span></td>
+            <td className="td text-xs">{t.kcal_planned} سعرة<span className="block text-slate-400">{t.protein_planned_g} غ بروتين</span></td>
+            <td className="td"><Badge value={t.status} /></td>
+            <td className="td"><div className="flex gap-1">
+              {has(m, 'nutrition.kitchen') && t.status === 'ordered' && <button className="btn-ghost text-xs" onClick={() => act(() => api(`/api/nutrition/trays/${t.id}/prepare`, { method: 'POST' }), 'حُضّرت الصينية')}>تحضير</button>}
+              {has(m, 'nutrition.kitchen') && t.status === 'prepared' && <button className="btn-primary text-xs" onClick={() => act(() => api(`/api/nutrition/trays/${t.id}/deliver`, { method: 'POST' }), 'سُلّمت الصينية')}>تسليم</button>}
+              {has(m, 'nutrition.intake') && t.status === 'delivered' && <button className="btn-primary text-xs" onClick={() => act(() => api(`/api/nutrition/trays/${t.id}/intake`, { method: 'POST', body: JSON.stringify({ consumedPct: Number(intake.pct), refused: intake.refused, notes: intake.notes || undefined }) }), 'سُجّل الاستهلاك')}>تسجيل الاستهلاك ({intake.pct}%)</button>}
+            </div></td>
+          </tr>)}
+          {kitchen.items.length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا صواني اليوم.</td></tr>}
+        </tbody></table></div>
+        {has(m, 'nutrition.intake') && <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
+          <span className="text-slate-500">نسبة الاستهلاك المستخدمة عند التسجيل:</span>
+          <input className="input !w-24" type="number" min="0" max="100" value={intake.pct} onChange={(e) => setIntake({ ...intake, pct: e.target.value })} />
+          <label className="flex items-center gap-1"><input type="checkbox" checked={intake.refused} onChange={(e) => setIntake({ ...intake, refused: e.target.checked })} />رفض الوجبة</label>
+          <input className="input !w-64" placeholder="ملاحظة (اختياري)" value={intake.notes} onChange={(e) => setIntake({ ...intake, notes: e.target.value })} />
+        </div>}
+      </Card>}
+
+      {file && <div className="grid lg:grid-cols-2 gap-3">
+        <Card title={`${file.patient.name} — ${file.patient.mrn}`} action={<button className="btn-ghost text-xs" onClick={() => setFile(null)}>إغلاق</button>}>
+          <div className="text-xs space-y-1 text-slate-600">
+            <p>الطاقة اليوم: <b>{file.today.kcalConsumed}</b> / {file.today.targetKcal} سعرة {file.today.adherencePct !== null && <span className="text-slate-400">({file.today.adherencePct}%)</span>}</p>
+            <p>أمر التغذية النشط: {file.activeDiet ? <>{file.activeDiet.order_no} · {file.activeDiet.dietAr} · {(file.activeDiet.restrictionLabels ?? []).join(' · ') || 'بلا قيود'}</> : 'لا يوجد'}</p>
+            {file.requiredRestrictions.length > 0 && <p className="text-rose-700">قيود إلزامية من الحساسية: {file.requiredRestrictions.map((r: any) => `${RESTRICTION_LABELS[r.code] ?? r.code} (${r.name})`).join(' · ')}</p>}
+            <p className="text-slate-500">{file.limits}</p>
+          </div>
+          <div className="mt-3 border-t pt-2">
+            <p className="text-sm font-semibold mb-1">وجبات آخر يومين</p>
+            <table className="w-full"><tbody>
+              {file.trays.map((t: any) => <tr key={t.id}>
+                <td className="td text-xs">{day(t.tray_date)}</td><td className="td text-xs">{t.mealAr}</td>
+                <td className="td text-xs">{t.kcal_planned} سعرة</td>
+                <td className="td text-xs">{t.intake_pct !== null ? `${t.intake_pct}% (${t.kcal_consumed} سعرة)` : '—'}</td>
+                <td className="td"><Badge value={t.status} /></td>
+              </tr>)}
+              {file.trays.length === 0 && <tr><td className="td text-xs text-slate-500">لا صواني مسجلة.</td></tr>}
+            </tbody></table>
+          </div>
+          <div className="mt-3 border-t pt-2 text-xs">
+            <p className="text-sm font-semibold mb-1">فحوص وتقييمات</p>
+            {file.screenings.map((s: any) => <p key={s.id}>فحص {day(s.screening_date)}: نقاط {s.score} · {RISK_LABELS[s.risk_level]} · BMI {Number(s.bmi)}</p>)}
+            {file.assessments.map((a: any) => <p key={a.id}>تقييم {day(a.assessed_at)}: {a.energy_target_kcal} سعرة · {Number(a.protein_target_g)} غ بروتين{a.variance_reason ? ' (انحراف مبرر)' : ''}</p>)}
+            {file.tubeOrders.map((t: any) => <p key={t.id}>{t.order_no}: {t.routeAr} · {t.formula_name} · {Number(t.rate_ml_hr)} مل/س × {t.hours_per_day} سا · {t.kcal_day} سعرة</p>)}
+            {file.followups.map((f: any) => <p key={f.id}>متابعة {dt(f.recorded_at)}: تحمل {TOLERANCE_LABELS[f.tolerance]}{f.weight_kg ? ` · ${Number(f.weight_kg)} كغ` : ''} — {f.note}</p>)}
+          </div>
+        </Card>
+
+        <div className="space-y-3">
+          {has(m, 'nutrition.screen') && <Card title="فحص خطر التغذية (تمريض)">
+            <div className="grid grid-cols-2 gap-1">
+              {[['weightKg', 'الوزن (كغ)'], ['heightCm', 'الطول (سم)'], ['weightLossPct', 'فقد الوزن %'], ['actionTaken', 'الإجراء المتخذ']].map(([k, label]) => (
+                <input key={k} className="input" placeholder={label} value={screen[k]} onChange={(e) => setScreen({ ...screen, [k]: e.target.value })} />
+              ))}
+              <select className="input" value={screen.intakeReduction} onChange={(e) => setScreen({ ...screen, intakeReduction: e.target.value })}>
+                <option value="none">تناول طبيعي</option><option value="mild">نقص خفيف</option><option value="moderate">نقص متوسط</option><option value="severe">نقص شديد</option>
+              </select>
+              <select className="input" value={screen.diseaseSeverity} onChange={(e) => setScreen({ ...screen, diseaseSeverity: e.target.value })}>
+                <option value="none">بلا مرض حاد</option><option value="mild">مرض خفيف</option><option value="moderate">مرض متوسط</option><option value="severe">مرض شديد</option>
+              </select>
+            </div>
+            <button className="btn-primary text-xs mt-2" disabled={!selectedAdmission || !screen.weightKg || !screen.heightCm}
+              onClick={() => act(async () => {
+                await api('/api/nutrition/screenings', { method: 'POST', body: JSON.stringify({
+                  admissionId: screen.admissionId, weightKg: Number(screen.weightKg), heightCm: Number(screen.heightCm),
+                  weightLossPct: Number(screen.weightLossPct || 0), intakeReduction: screen.intakeReduction,
+                  diseaseSeverity: screen.diseaseSeverity, actionTaken: screen.actionTaken || undefined,
+                }) });
+              }, 'سُجّل فحص التغذية')}>حفظ الفحص</button>
+            <p className="text-[11px] text-slate-500 mt-1">نقاط مرتفعة تتطلب إجراءً موثقًا. الفحص سجل ملحق لا يُعدّل.</p>
+          </Card>}
+
+          {isDietitian && <Card title="تقييم وأهداف التغذية (أخصائي)">
+            <div className="grid grid-cols-2 gap-1">
+              {[['weightKg', 'الوزن (كغ)'], ['heightCm', 'الطول (سم)'], ['energyTargetKcal', 'هدف الطاقة (اختياري)'], ['proteinTargetG', 'هدف البروتين غ (اختياري)'], ['fluidLimitMl', 'حد السوائل مل (اختياري)'], ['varianceReason', 'سبب الانحراف (إن وجد)']].map(([k, label]) => (
+                <input key={k} className="input" placeholder={label} value={assess[k]} onChange={(e) => setAssess({ ...assess, [k]: e.target.value })} />
+              ))}
+            </div>
+            <input className="input mt-1" placeholder="التشخيص التغذوي" value={assess.nutritionDiagnosis} onChange={(e) => setAssess({ ...assess, nutritionDiagnosis: e.target.value })} />
+            <input className="input mt-1" placeholder="الخطة الغذائية" value={assess.plan} onChange={(e) => setAssess({ ...assess, plan: e.target.value })} />
+            <button className="btn-primary text-xs mt-2" disabled={!assess.admissionId || !assess.weightKg || !assess.heightCm || assess.nutritionDiagnosis.length < 5 || assess.plan.length < 10}
+              onClick={() => act(async () => {
+                await api('/api/nutrition/assessments', { method: 'POST', body: JSON.stringify({
+                  admissionId: assess.admissionId, weightKg: Number(assess.weightKg), heightCm: Number(assess.heightCm),
+                  energyTargetKcal: assess.energyTargetKcal ? Number(assess.energyTargetKcal) : undefined,
+                  proteinTargetG: assess.proteinTargetG ? Number(assess.proteinTargetG) : undefined,
+                  fluidLimitMl: assess.fluidLimitMl ? Number(assess.fluidLimitMl) : undefined,
+                  varianceReason: assess.varianceReason || undefined,
+                  nutritionDiagnosis: assess.nutritionDiagnosis, plan: assess.plan,
+                }) });
+              }, 'حُفظ التقييم')}>حفظ التقييم</button>
+          </Card>}
+
+          {has(m, 'nutrition.order') && <Card title="أمر التغذية">
+            <div className="grid grid-cols-2 gap-1">
+              <select className="input" value={order.dietType} onChange={(e) => setOrder({ ...order, dietType: e.target.value })}>
+                {Object.entries(DIET_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <select className="input" value={order.texture} onChange={(e) => setOrder({ ...order, texture: e.target.value })}>
+                <option value="">القوام الافتراضي</option><option value="normal">عادي</option><option value="soft">لين</option><option value="minced">مفروم</option><option value="pureed">مهروس</option>
+              </select>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2 text-xs">
+              {Object.entries(RESTRICTION_LABELS).map(([k, v]) => (
+                <label key={k} className="flex items-center gap-1"><input type="checkbox" checked={order.restrictions.includes(k)}
+                  onChange={(e) => setOrder({ ...order, restrictions: e.target.checked ? [...order.restrictions, k] : order.restrictions.filter((x: string) => x !== k) })} />{v}</label>
+              ))}
+            </div>
+            {file.requiredRestrictions.length > 0 && <p className="text-[11px] text-rose-700 mt-1">يجب اختيار: {file.requiredRestrictions.map((r: any) => RESTRICTION_LABELS[r.code] ?? r.code).join(' · ')} وإلا سيُرفض الأمر.</p>}
+            <input className="input mt-1" placeholder="ملاحظات (اختياري)" value={order.notes} onChange={(e) => setOrder({ ...order, notes: e.target.value })} />
+            <div className="flex gap-1 mt-2">
+              <button className="btn-primary text-xs" disabled={!order.admissionId}
+                onClick={() => act(async () => {
+                  await api('/api/nutrition/diet-orders', { method: 'POST', body: JSON.stringify({
+                    admissionId: order.admissionId, dietType: order.dietType,
+                    texture: order.texture || undefined, restrictions: order.restrictions, notes: order.notes || undefined,
+                  }) });
+                }, 'صدر أمر التغذية')}>إصدار الأمر</button>
+              {file.activeDiet && <button className="btn-ghost text-xs"
+                onClick={() => act(async () => {
+                  await api(`/api/nutrition/diet-orders/${file.activeDiet.id}/trays`, { method: 'POST', body: JSON.stringify({}) });
+                }, 'وُلّدت وجبات اليوم')}>توليد وجبات اليوم</button>}
+            </div>
+          </Card>}
+
+          {has(m, 'nutrition.tube') && <Card title="تغذية أنبوبية / وريدية">
+            <div className="grid grid-cols-2 gap-1">
+              <select className="input" value={tube.route} onChange={(e) => setTube({ ...tube, route: e.target.value })}>
+                {Object.entries(TUBE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <input className="input" placeholder="اسم التركيبة" value={tube.formulaName} onChange={(e) => setTube({ ...tube, formulaName: e.target.value })} />
+              {[['kcalPerMl', 'سعرة/مل'], ['proteinGPerL', 'بروتين غ/ل'], ['rateMlHr', 'معدل مل/سا'], ['hoursPerDay', 'ساعات/يوم']].map(([k, label]) => (
+                <input key={k} className="input" type="number" placeholder={label} value={tube[k]} onChange={(e) => setTube({ ...tube, [k]: e.target.value })} />
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1">الحجم اليومي = المعدل × الساعات، والسعرات = الحجم × تركيز الطاقة (محسوبة على الخادم).</p>
+            <button className="btn-primary text-xs mt-2" disabled={!tube.admissionId || tube.formulaName.length < 2}
+              onClick={() => act(async () => {
+                await api('/api/nutrition/tube-orders', { method: 'POST', body: JSON.stringify({
+                  admissionId: tube.admissionId, route: tube.route, formulaName: tube.formulaName,
+                  kcalPerMl: Number(tube.kcalPerMl), proteinGPerL: Number(tube.proteinGPerL),
+                  rateMlHr: Number(tube.rateMlHr), hoursPerDay: Number(tube.hoursPerDay), notes: tube.notes || undefined,
+                }) });
+              }, 'صدر أمر التغذية الأنبوبية')}>بدء التغذية</button>
+            {file.tubeOrders.filter((t: any) => t.status === 'active').map((t: any) => <button key={t.id} className="btn-danger text-xs mt-2 ms-2"
+              onClick={() => act(async () => {
+                const reason = window.prompt('سبب إيقاف التغذية (٥ أحرف على الأقل):') ?? '';
+                if (reason.trim().length < 5) return;
+                await api(`/api/nutrition/tube-orders/${t.id}/stop`, { method: 'POST', body: JSON.stringify({ reason }) });
+              }, 'أُوقف أمر التغذية')}>إيقاف {t.order_no}</button>)}
+          </Card>}
+
+          {isDietitian && <Card title="متابعة أخصائي التغذية">
+            <div className="grid grid-cols-3 gap-1">
+              <input className="input" placeholder="الوزن (كغ)" value={follow.weightKg} onChange={(e) => setFollow({ ...follow, weightKg: e.target.value })} />
+              <input className="input" type="number" placeholder="متوسط الاستهلاك %" value={follow.intakePctAvg} onChange={(e) => setFollow({ ...follow, intakePctAvg: e.target.value })} />
+              <select className="input" value={follow.tolerance} onChange={(e) => setFollow({ ...follow, tolerance: e.target.value })}>
+                {Object.entries(TOLERANCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <input className="input mt-1" placeholder="ملاحظة المتابعة (١٠ أحرف على الأقل)" value={follow.note} onChange={(e) => setFollow({ ...follow, note: e.target.value })} />
+            <button className="btn-primary text-xs mt-2" disabled={follow.note.trim().length < 10}
+              onClick={() => act(async () => {
+                const admId = screen.admissionId || admissions.find((a: any) => a.patient_id === file.patient.id)?.admission_id;
+                await api(`/api/nutrition/patients/${file.patient.id}/followups`, { method: 'POST', body: JSON.stringify({
+                  admissionId: admId, weightKg: follow.weightKg ? Number(follow.weightKg) : undefined,
+                  intakePctAvg: follow.intakePctAvg ? Number(follow.intakePctAvg) : undefined,
+                  tolerance: follow.tolerance, note: follow.note,
+                }) });
+              }, 'سُجّلت المتابعة')}>حفظ المتابعة</button>
+          </Card>}
+        </div>
+      </div>}
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------- Portal ----
 function Portal() {
   const [d, setD] = useState<any>(null); const [err, setErr] = useState<string | null>(null);
@@ -2020,6 +2305,7 @@ const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'surgery', label: 'العمليات والتخدير', perms: ['surgery.read'] },
   { key: 'icu', label: 'العناية المركزة', perms: ['icu.read'] },
   { key: 'bloodbank', label: 'بنك الدم', perms: ['bloodbank.read'] },
+  { key: 'nutrition', label: 'التغذية الطبية', perms: ['nutrition.read', 'nutrition.kitchen'] },
   { key: 'pharmacy', label: 'الصيدلية', perms: ['pharmacy.prescription.read'] },
   { key: 'billing', label: 'الفوترة', perms: ['billing.invoice.read'] },
   { key: 'reports', label: 'التقارير', perms: ['report.read'] },
@@ -2086,6 +2372,7 @@ export default function App() {
         {page === 'surgery' && <Surgery m={auth} />}
         {page === 'icu' && <Icu m={auth} />}
         {page === 'bloodbank' && <BloodBank m={auth} />}
+        {page === 'nutrition' && <Nutrition m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
         {page === 'radiology' && <Radiology m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}

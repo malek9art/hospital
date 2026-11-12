@@ -75,6 +75,8 @@ beforeAll(async () => {
   agents.intensivist = await login('intensivist@demo.hms', 'ICU#Demo2026', 'intensivist');
   agents.icuNurse = await login('icunurse@demo.hms', 'ICU#Demo2026', 'icuNurse');
   agents.bloodTech = await login('bloodbank@demo.hms', 'Blood#Demo2026', 'bloodTech');
+  agents.dietitian = await login('dietitian@demo.hms', 'Nutrition#Demo2026', 'dietitian');
+  agents.kitchen = await login('kitchen@demo.hms', 'Kitchen#Demo2026', 'kitchen');
   agents.radTech = await login('radiology@demo.hms', 'Radiology#Demo2026', 'radTech');
   agents.radiologist = await login('radiologist@demo.hms', 'Radiology#Demo2026', 'radiologist');
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
@@ -2202,5 +2204,334 @@ describe('blood bank: compatibility, cross-match, issue and transfusion safety',
         q.query(`DELETE FROM blood_units WHERE id = $1`, [candidate.id]),
       ),
     ).rejects.toThrow(/permission denied|foreign key|violates/);
+  });
+});
+
+describe('clinical nutrition: screening, allergy-safe diet orders, trays and feeding', () => {
+  const nut: Record<string, any> = {};
+
+  it('shows the nutrition board with the screened ICU patient and hides it from unprivileged roles', async () => {
+    const board = await expectStatus(await call(agents.nurse, 'GET', '/api/nutrition/board'), 200, 'nutrition board');
+    expect(board.totals.inpatients).toBeGreaterThanOrEqual(1);
+    const icu = board.items.find((i: any) => i.mrn === 'MRN-0004');
+    expect(icu).toBeTruthy();
+    // 6% weight loss (2) + mild intake reduction (1) + moderate disease (2) + age 68 (1)
+    expect(icu.risk_level).toBe('high');
+    expect(icu.diet_type).toBe('diabetic');
+    expect(icu.restriction_labels).toContain('سكري');
+    expect(icu.trays_total).toBeGreaterThanOrEqual(4);
+
+    expect((await call(agents.doctor, 'GET', '/api/nutrition/board')).statusCode).toBe(403);
+    expect((await call(agents.kitchen, 'GET', '/api/nutrition/board')).statusCode).toBe(403);
+    // The kitchen worklist is operational data and is not open to nursing.
+    expect((await call(agents.nurse, 'GET', '/api/nutrition/kitchen')).statusCode).toBe(403);
+  });
+
+  it('lets nursing screen but not assess, and blocks a high-risk score without a documented action', async () => {
+    const adm = await db.query(`SELECT id, patient_id, encounter_id FROM admissions WHERE admission_no = 'ADM-000002'`);
+    nut.admissionId = adm.rows[0].id;
+    nut.icuPatientId = adm.rows[0].patient_id;
+
+    const noAction = await call(agents.nurse, 'POST', '/api/nutrition/screenings', {
+      admissionId: nut.admissionId, weightKg: 62, heightCm: 178.5, weightLossPct: 12,
+      intakeReduction: 'severe', diseaseSeverity: 'severe',
+    });
+    expect(noAction.statusCode).toBe(409);
+    expect(noAction.json().error.message).toContain('إجراء');
+
+    const screened = await expectStatus(
+      await call(agents.nurse, 'POST', '/api/nutrition/screenings', {
+        admissionId: nut.admissionId, weightKg: 74, heightCm: 178.5, weightLossPct: 6,
+        intakeReduction: 'mild', diseaseSeverity: 'moderate', actionTaken: 'تحويل لأخصائي التغذية',
+      }),
+      201,
+      'nutrition screening',
+    );
+    expect(screened.bmi).toBeCloseTo(23.2, 1);
+    // weight loss 6% (2) + intake mild (1) + disease moderate (2) + age ≥65 (1)
+    expect(screened.score).toBe(6);
+    expect(screened.riskLevel).toBe('high');
+    expect(screened.referralRequired).toBe(true);
+
+    // Screening is nursing; assessment is the dietitian (separation of duties).
+    expect((await call(agents.nurse, 'POST', '/api/nutrition/assessments', {
+      admissionId: nut.admissionId, weightKg: 74, heightCm: 178.5,
+      nutritionDiagnosis: 'سوء تغذية متوسط', plan: 'خطة تغذية علاجية لعدة أسابيع',
+    })).statusCode).toBe(403);
+    expect((await call(agents.doctor, 'POST', '/api/nutrition/screenings', {
+      admissionId: nut.admissionId, weightKg: 74, heightCm: 178.5,
+      intakeReduction: 'none', diseaseSeverity: 'none',
+    })).statusCode).toBe(403);
+
+    // Screenings are a clinical record: no edits, no deletes.
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.nurse.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE nutrition_screenings SET score = 0 WHERE id = $1`, [screened.id]),
+      ),
+    ).rejects.toThrow(/append-only|permission denied/);
+  });
+
+  it('requires a dietitian assessment and a reason for targets far from the recommendation', async () => {
+    const deviating = await call(agents.dietitian, 'POST', '/api/nutrition/assessments', {
+      admissionId: nut.admissionId, weightKg: 74, heightCm: 178.5,
+      energyTargetKcal: 1000, proteinTargetG: 40,
+      nutritionDiagnosis: 'سوء تغذية متوسط', plan: 'تقييد شديد للسعرات',
+    });
+    expect(deviating.statusCode).toBe(409);
+    expect(deviating.json().error.details.recommendedEnergyKcal).toBeGreaterThan(1500);
+
+    const assessed = await expectStatus(
+      await call(agents.dietitian, 'POST', '/api/nutrition/assessments', {
+        admissionId: nut.admissionId, weightKg: 74, heightCm: 178.5, fluidLimitMl: 2000,
+        nutritionDiagnosis: 'سوء تغذية متوسط مع مرض حاد',
+        plan: 'حمية سكرية ١٨٥٠ سعرة و٨٩ غ بروتين مع متابعة يومية',
+      }),
+      201,
+      'nutrition assessment',
+    );
+    expect(assessed.energyTargetKcal).toBe(1850);
+    expect(assessed.proteinTargetG).toBeCloseTo(88.8, 1);
+    expect(assessed.deviates).toBe(false);
+    nut.assessmentId = assessed.id;
+  });
+
+  it('refuses a diet order that ignores a recorded food allergy, then accepts it with the restriction', async () => {
+    // A dedicated patient with a documented milk allergy, admitted on a free bed.
+    const created = await expectStatus(
+      await call(agents.records, 'POST', '/api/patients', {
+        fullNameAr: 'هند ماجد العمري', dateOfBirth: '1981-02-14', sex: 'female', acknowledgeDuplicate: true,
+      }),
+      201,
+      'allergy patient',
+    );
+    nut.allergyPatientId = created.patient.id;
+    nut.allergyMrn = created.patient.mrn;
+    // Clinical notes (including allergies) need a care relationship: the
+    // physician opens the visit first, exactly as in the real workflow.
+    // A care relationship is established by the appointment (or an existing
+    // encounter); a physician cannot open a stranger's chart otherwise.
+    const allergyAppointment = await expectStatus(
+      await call(agents.reception, 'POST', '/api/appointments', {
+        patientId: created.patient.id,
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'GEN').id,
+        doctorId: agents.doctor.me.user.id,
+        scheduledAt: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+        reason: 'تقييم سوء تغذية',
+      }),
+      201,
+      'appointment for allergy patient',
+    );
+    const allergyEncounter = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/encounters', {
+        patientId: created.patient.id,
+        appointmentId: allergyAppointment.id ?? allergyAppointment.appointment?.id,
+        encounterType: 'outpatient',
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'GEN').id,
+        chiefComplaint: 'تقييم سوء تغذية وحساسية غذائية',
+      }),
+      201,
+      'encounter for allergy patient',
+    );
+    expect(allergyEncounter.id).toBeTruthy();
+    await expectStatus(
+      await call(agents.doctor, 'POST', `/api/patients/${created.patient.id}/allergies`, {
+        allergen: 'حليب البقر', reaction: 'إسهال وغازات', severity: 'moderate',
+      }),
+      201,
+      'milk allergy',
+    );
+    const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
+    // Earlier tests may fill every bed, so free a cleaning/maintenance bed if
+    // needed; the admission itself must still pass the server's bed checks.
+    let bed = beds.beds.find((b: any) => b.bed_status === 'available');
+    if (!bed) {
+      const releasable = beds.beds.find((b: any) => ['cleaning', 'maintenance'].includes(b.bed_status));
+      expect(releasable).toBeTruthy();
+      await expectStatus(
+        await call(agents.doctor, 'PATCH', `/api/inpatient/beds/${releasable.id}/status`, { status: 'available' }),
+        200,
+        'release bed',
+      );
+      bed = releasable;
+    }
+    const admitted = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/inpatient/admissions', {
+        patientId: created.patient.id, bedId: bed.id, reason: 'متابعة سوء تغذية وحساسية غذائية',
+      }),
+      201,
+      'admit allergy patient',
+    );
+    nut.allergyAdmissionId = admitted.id;
+
+    // No assessment yet → no diet order at all.
+    const premature = await call(agents.dietitian, 'POST', '/api/nutrition/diet-orders', {
+      admissionId: nut.allergyAdmissionId, dietType: 'diabetic', restrictions: ['diabetic', 'lactose_free'],
+    });
+    expect(premature.statusCode).toBe(409);
+    expect(premature.json().error.message).toContain('تقييم');
+
+    await expectStatus(
+      await call(agents.nurse, 'POST', '/api/nutrition/screenings', {
+        admissionId: nut.allergyAdmissionId, weightKg: 55, heightCm: 160, weightLossPct: 8,
+        intakeReduction: 'moderate', diseaseSeverity: 'mild', actionTaken: 'تحويل للتغذية',
+      }),
+      201,
+      'screen allergy patient',
+    );
+    await expectStatus(
+      await call(agents.dietitian, 'POST', '/api/nutrition/assessments', {
+        admissionId: nut.allergyAdmissionId, weightKg: 55, heightCm: 160,
+        nutritionDiagnosis: 'نقص وزن مع حساسية حليب', plan: 'حمية خالية من اللاكتوز ١٦٠٠ سعرة',
+      }),
+      201,
+      'assess allergy patient',
+    );
+
+    const unsafe = await call(agents.dietitian, 'POST', '/api/nutrition/diet-orders', {
+      admissionId: nut.allergyAdmissionId, dietType: 'diabetic', restrictions: ['diabetic'],
+    });
+    expect(unsafe.statusCode).toBe(409);
+    expect(unsafe.json().error.details.requiredRestrictions).toContain('lactose_free');
+
+    const safe = await expectStatus(
+      await call(agents.dietitian, 'POST', '/api/nutrition/diet-orders', {
+        admissionId: nut.allergyAdmissionId, dietType: 'diabetic', restrictions: ['diabetic', 'lactose_free'],
+        notes: 'بديل حليب خالٍ من اللاكتوز',
+      }),
+      201,
+      'allergy-safe diet order',
+    );
+    expect(safe.restrictions).toContain('lactose_free');
+    expect(safe.allergyChecked).toContain('حليب البقر');
+    nut.dietOrderId = safe.id;
+
+    // Only the dietitian may order the diet.
+    expect((await call(agents.nurse, 'POST', '/api/nutrition/diet-orders', {
+      admissionId: nut.allergyAdmissionId, dietType: 'regular', restrictions: ['lactose_free'],
+    })).statusCode).toBe(403);
+  });
+
+  it('generates one tray set per day and enforces the kitchen workflow before intake', async () => {
+    const first = await expectStatus(
+      await call(agents.dietitian, 'POST', `/api/nutrition/diet-orders/${nut.dietOrderId}/trays`, {}),
+      201,
+      'tray generation',
+    );
+    expect(first.created).toHaveLength(4);
+    expect(first.created.map((t: any) => t.meal)).toEqual(['breakfast', 'lunch', 'dinner', 'snack']);
+
+    const again = await expectStatus(
+      await call(agents.dietitian, 'POST', `/api/nutrition/diet-orders/${nut.dietOrderId}/trays`, {}),
+      201,
+      'tray regeneration',
+    );
+    expect(again.created).toHaveLength(0);
+    expect(again.skipped).toHaveLength(4);
+
+    const kitchen = await expectStatus(await call(agents.kitchen, 'GET', '/api/nutrition/kitchen'), 200, 'kitchen');
+    const mine = kitchen.items.filter((t: any) => t.mrn === nut.allergyMrn);
+    expect(mine).toHaveLength(4);
+    expect(mine[0].restriction_labels).toContain('خالٍ من اللاكتوز');
+    const breakfast = mine.find((t: any) => t.meal === 'breakfast');
+    nut.trayId = breakfast.id;
+
+    // Cannot deliver before preparation, cannot record intake before delivery.
+    expect((await call(agents.kitchen, 'POST', `/api/nutrition/trays/${breakfast.id}/deliver`)).statusCode).toBe(409);
+    expect((await call(agents.nurse, 'POST', `/api/nutrition/trays/${breakfast.id}/intake`, { consumedPct: 50 })).statusCode).toBe(409);
+    expect((await call(agents.nurse, 'POST', `/api/nutrition/trays/${breakfast.id}/prepare`)).statusCode).toBe(403);
+
+    await expectStatus(await call(agents.kitchen, 'POST', `/api/nutrition/trays/${breakfast.id}/prepare`), 200, 'prepare');
+    await expectStatus(await call(agents.kitchen, 'POST', `/api/nutrition/trays/${breakfast.id}/deliver`), 200, 'deliver');
+
+    const intake = await expectStatus(
+      await call(agents.nurse, 'POST', `/api/nutrition/trays/${breakfast.id}/intake`, {
+        consumedPct: 60, notes: 'تناول أكثر من نصف الوجبة',
+      }),
+      200,
+      'intake',
+    );
+    expect(intake.intakePct).toBe(60);
+    // Intake is derived from the planned energy of that tray, not retyped.
+    expect(intake.kcalConsumed).toBe(Math.round(Number(breakfast.kcal_planned) * 0.6));
+    expect(intake.kcalConsumed).toBe(Math.round(first.created.find((t: any) => t.meal === 'breakfast').kcal * 0.6));
+
+    // A closed tray cannot be changed again.
+    expect((await call(agents.nurse, 'POST', `/api/nutrition/trays/${breakfast.id}/intake`, { consumedPct: 90 })).statusCode).toBe(409);
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.kitchen.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE nutrition_trays SET intake_pct = 100 WHERE id = $1`, [breakfast.id]),
+      ),
+    ).rejects.toThrow(/closed tray|permission denied/);
+  });
+
+  it('orders enteral feeding once per route, requires a stop reason, and keeps the record immutable', async () => {
+    expect((await call(agents.nurse, 'POST', '/api/nutrition/tube-orders', {
+      admissionId: nut.allergyAdmissionId, route: 'ng', formulaName: 'نيوتريزن', kcalPerMl: 1,
+      proteinGPerL: 40, rateMlHr: 40, hoursPerDay: 12,
+    })).statusCode).toBe(403);
+
+    const tube = await expectStatus(
+      await call(agents.dietitian, 'POST', '/api/nutrition/tube-orders', {
+        admissionId: nut.allergyAdmissionId, route: 'ng', formulaName: 'نيوتريزن 1.0', kcalPerMl: 1,
+        proteinGPerL: 40, rateMlHr: 50, hoursPerDay: 16,
+      }),
+      201,
+      'tube order',
+    );
+    expect(tube.volumeMlDay).toBe(800);
+    expect(tube.kcalDay).toBe(800);
+    expect(tube.proteinGDay).toBe(32);
+
+    const duplicate = await call(agents.dietitian, 'POST', '/api/nutrition/tube-orders', {
+      admissionId: nut.allergyAdmissionId, route: 'ng', formulaName: 'بديل', kcalPerMl: 1,
+      proteinGPerL: 40, rateMlHr: 40, hoursPerDay: 12,
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    expect((await call(agents.dietitian, 'POST', `/api/nutrition/tube-orders/${tube.id}/stop`, { reason: 'قصير' })).statusCode).toBe(400);
+    const stopped = await expectStatus(
+      await call(agents.dietitian, 'POST', `/api/nutrition/tube-orders/${tube.id}/stop`, {
+        reason: 'تحسن الشهية والانتقال لتغذية فموية',
+      }),
+      200,
+      'stop feed',
+    );
+    expect(stopped.status).toBe('stopped');
+
+    // The prescription itself can never be rewritten, only stopped.
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.dietitian.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE nutrition_tube_orders SET rate_ml_hr = 100 WHERE id = $1`, [tube.id]),
+      ),
+    ).rejects.toThrow(/immutable|cannot be changed|permission denied/);
+  });
+
+  it('records dietitian follow-up and exposes the allergy-safe plan in the patient file', async () => {
+    const followup = await expectStatus(
+      await call(agents.dietitian, 'POST', `/api/nutrition/patients/${nut.allergyPatientId}/followups`, {
+        admissionId: nut.allergyAdmissionId, weightKg: 54.5, intakePctAvg: 55, tolerance: 'partial',
+        note: 'تحمل جزئي للحمية مع استمرار بديل الحليب الخالي من اللاكتوز',
+      }),
+      201,
+      'follow-up',
+    );
+    expect(followup.id).toBeTruthy();
+    expect((await call(agents.nurse, 'POST', `/api/nutrition/patients/${nut.allergyPatientId}/followups`, {
+      admissionId: nut.allergyAdmissionId, tolerance: 'good', note: 'متابعة تمريضية غير مسموحة',
+    })).statusCode).toBe(403);
+
+    const file = await expectStatus(
+      await call(agents.dietitian, 'GET', `/api/nutrition/patients/${nut.allergyPatientId}`),
+      200,
+      'nutrition file',
+    );
+    expect(file.activeDiet.order_no).toBe('NUT-000002');
+    expect(file.requiredRestrictions.map((r: any) => r.code)).toContain('lactose_free');
+    expect(file.followups).toHaveLength(1);
+    expect(file.trays.some((t: any) => t.status === 'consumed')).toBe(true);
+    expect(file.limits).toContain('لا قاعدة تراكيب غذائية');
+
+    // Chart access still needs a care relationship or break-glass for physicians.
+    expect((await call(agents.patient, 'GET', '/api/nutrition/board')).statusCode).toBe(403);
   });
 });

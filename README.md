@@ -42,6 +42,8 @@ npm start               # http://localhost:8080
 | محاسب | accountant@demo.hms | Account#Demo2026 |
 | مدير نظام | admin@demo.hms | Admin#Demo2026 |
 | تقني بنك الدم | bloodbank@demo.hms | Blood#Demo2026 |
+| أخصائي تغذية | dietitian@demo.hms | Nutrition#Demo2026 |
+| خدمات التغذية | kitchen@demo.hms | Kitchen#Demo2026 |
 | مدقق | auditor@demo.hms | Auditor#Demo2026 |
 | مريض (بوابة) | patient@demo.hms | Patient#Demo2026 |
 
@@ -53,20 +55,20 @@ npm start               # http://localhost:8080
 
 تُعرض هذه الحالة داخل النظام في صفحة «حالة الوحدات» من مصدر واحد (`meta/modules`).
 
-**منفذ فعليًا ومختبر:** المرضى والملف الطبي (تسجيل/بحث/حساسية/أمراض مزمنة/دمج مدقق/سجل اطلاع) · المواعيد والاستقبال (حجز، منع تعارض، حضور، إلغاء، قائمة اليوم) · العيادات (زيارة، علامات حيوية، SOAP، تشخيص ICD-10، طلب تحاليل، وصفة، إغلاق) · المختبر (عينة، نتيجة، قيم حرجة وتنبيه، اعتماد منفصل، تصحيح مدقق) · الصيدلية (تحقق حساسية/تداخل، صرف FEFO، دفعات ومخزون وحركات، منع تكرار) · **التنويم والأسرّة** (تنويم بأمر طبيب، سرير متاح/مشغول/تنظيف/صيانة، نقل، خروج بملخص، احتساب أيام الإقامة وترحيلها للفاتورة) · **الطوارئ والفرز** (لوحة ESI ١–٥ مرتبة بالخطورة، وصول مجهول الهوية برقم مؤقت ومطابقة هوية موثقة، إعادة فرز مسببة، تحويل للتنويم على نفس الزيارة أو خروج/تحويل) · **التقارير والتصدير** (زيارات، نتائج معتمدة، إيرادات، إشغال؛ CSV عربي مع BOM، حجب صيغ Excel، وتسجيل كل تصدير في التدقيق) · الفوترة (فواتير تلقائية، دفع idempotent، إلغاء مدقق) · التدقيق (سلسلة hash قابلة للتحقق) · إدارة المستخدمين والأدوار والجلسات · تعدد المنشآت (RLS) · لوحة مؤشرات حقيقية · **العمليات والتخدير** (جدولة بلا تعارض غرف، قوائم WHO، سجل تخدير ملحق، عدّ أدوات يمنع الإغلاق عند الاختلاف، إفاقة ألدريتي) · **العناية المركزة** (لوحة، قياسات ملحقة، تنفس صناعي بإصدارات، SOFA، حزمة يومية، إغلاق مجمّد) · **بنك الدم** (متبرعون وفحوص، وحدات بصلاحية، طلب مرتبط بزيارة مفتوحة، توافق ABO/Rh على الخادم، حجز وصرف منفصلان، نقل بمدقق ثانٍ مختلف، تفاعلات تستبعد الوحدة، استبعاد مسبب) · بوابة مريض للقراءة.
+**منفذ فعليًا ومختبر:** المرضى والملف الطبي (تسجيل/بحث/حساسية/أمراض مزمنة/دمج مدقق/سجل اطلاع) · المواعيد والاستقبال (حجز، منع تعارض، حضور، إلغاء، قائمة اليوم) · العيادات (زيارة، علامات حيوية، SOAP، تشخيص ICD-10، طلب تحاليل، وصفة، إغلاق) · المختبر (عينة، نتيجة، قيم حرجة وتنبيه، اعتماد منفصل، تصحيح مدقق) · الصيدلية (تحقق حساسية/تداخل، صرف FEFO، دفعات ومخزون وحركات، منع تكرار) · **التنويم والأسرّة** (تنويم بأمر طبيب، سرير متاح/مشغول/تنظيف/صيانة، نقل، خروج بملخص، احتساب أيام الإقامة وترحيلها للفاتورة) · **الطوارئ والفرز** (لوحة ESI ١–٥ مرتبة بالخطورة، وصول مجهول الهوية برقم مؤقت ومطابقة هوية موثقة، إعادة فرز مسببة، تحويل للتنويم على نفس الزيارة أو خروج/تحويل) · **التقارير والتصدير** (زيارات، نتائج معتمدة، إيرادات، إشغال؛ CSV عربي مع BOM، حجب صيغ Excel، وتسجيل كل تصدير في التدقيق) · الفوترة (فواتير تلقائية، دفع idempotent، إلغاء مدقق) · التدقيق (سلسلة hash قابلة للتحقق) · إدارة المستخدمين والأدوار والجلسات · تعدد المنشآت (RLS) · لوحة مؤشرات حقيقية · **العمليات والتخدير** (جدولة بلا تعارض غرف، قوائم WHO، سجل تخدير ملحق، عدّ أدوات يمنع الإغلاق عند الاختلاف، إفاقة ألدريتي) · **العناية المركزة** (لوحة، قياسات ملحقة، تنفس صناعي بإصدارات، SOFA، حزمة يومية، إغلاق مجمّد) · **بنك الدم** (متبرعون وفحوص، وحدات بصلاحية، طلب مرتبط بزيارة مفتوحة، توافق ABO/Rh على الخادم، حجز وصرف منفصلان، نقل بمدقق ثانٍ مختلف، تفاعلات تستبعد الوحدة، استبعاد مسبب) · **التغذية الطبية** (فحص تغذية تمريضي بنقاط خطر، تقييم وأهداف أخصائي التغذية بانحراف مبرر، أمر تغذية متحقق من الحساسية، توليد صواني يومية وتحضير/تسليم/تسجيل استهلاك، تغذية أنبوبية/وريدية بأوامر مقيدة ومسارات، ومتابعة غذائية) · بوابة مريض للقراءة.
 
-**جزئي:** التأمين (بوليصات/مطالبات داخلية بلا ربط خارجي) · الأشعة (طلب/تنفيذ/تقرير معتمد — لا DICOM/PACS) · العمليات (لا ربط بأجهزة التخدير ولا تتبع زرعات/تعقيم) · العناية المركزة (لا ربط مباشر بأجهزة المراقبة/التنفس، ولا APACHE/SAPS ولا خوارزميات فطام آلية) · **بنك الدم (لا فحص أجسام مضادة أو معايرة عيار، ولا تكامل مع مورّد أو بنك دم وطني؛ قواعد ABO/Rh جدول ثابت على الخادم)** · المخازن (أدوية فقط) · المالية (تحصيل وفواتير بلا دفتر أستاذ) · التقارير (CSV مدقق، PDF عبر طباعة المتصفح) · التكامل (FHIR جزئي: Patient/Observation؛ outbox بلا مزود بريد/SMS) · البوابة (لا حجز/دفع إلكتروني).
+**جزئي:** التأمين (بوليصات/مطالبات داخلية بلا ربط خارجي) · الأشعة (طلب/تنفيذ/تقرير معتمد — لا DICOM/PACS) · العمليات (لا ربط بأجهزة التخدير ولا تتبع زرعات/تعقيم) · العناية المركزة (لا ربط مباشر بأجهزة المراقبة/التنفس، ولا APACHE/SAPS ولا خوارزميات فطام آلية) · **بنك الدم (لا فحص أجسام مضادة أو معايرة عيار، ولا تكامل مع مورّد أو بنك دم وطني؛ قواعد ABO/Rh جدول ثابت على الخادم)** · **التغذية (لا قاعدة تراكيب غذائية ولا مخزون مطبخ ولا قائمة طعام؛ سعرات الوجبة حصة ثابتة ٢٥/٣٥/٣٠/١٠٪ من هدف اليوم، وأهداف الطاقة/البروتين تقديرية حسب الوزن)** · المخازن (أدوية فقط) · المالية (تحصيل وفواتير بلا دفتر أستاذ) · التقارير (CSV مدقق، PDF عبر طباعة المتصفح) · التكامل (FHIR جزئي: Patient/Observation؛ outbox بلا مزود بريد/SMS) · البوابة (لا حجز/دفع إلكتروني).
 
 > **حدود العمليات المعلنة:** الجدول وقوائم التحقق والتخدير والإفاقة وإلغاء العملية كلها منفذة ومختبرة، لكن **لا** يوجد تكامل مع أجهزة التخدير أو نظام التعقيم (CSSD) أو سجل الزرعات — لا يُعرض أي منها كمنفذ. · التمريض: خطط الرعاية وتسليم المناوبات وإعطاء الأدوية منفذة، لكن لا ربط بأجهزة الحقن الذكية أو الباركود عند السرير. · بنك الدم: القرار والتوثيق والتعقب منفذة، لكن **لا** يوجد تحليل أجسام مضادة ولا مراقبة درجة حرارة الوحدات أثناء النقل ولا ربط ببنك الدم الوطني — لا يُدّعى أي منها.
 
-**غير منفذ:** PACS/DICOM · التغذية الطبية · التعقيم ومكافحة العدوى (CSSD) · الموارد البشرية · الأصول والصيانة · الجودة/الامتثال · SNOMED CT · الترميز الكامل لـICD-10/LOINC.
+**غير منفذ:** PACS/DICOM · التعقيم ومكافحة العدوى (CSSD) · الموارد البشرية · الأصول والصيانة · الجودة/الامتثال · SNOMED CT · الترميز الكامل لـICD-10/LOINC.
 
 ## 4) الأمان والخصوصية
 
 - **كلمات المرور:** Argon2id (19 MiB, t=2).
 - **التشفير:** TLS في الإنتاج (reverse proxy) + AES-256-GCM على الحقول الحساسة (الهوية، الجوال، العنوان، رقم البوليصة) مع AAD يربط النص بالمستخدم/العمود؛ مفاتيح من البيئة (KMS/Vault في الإنتاج).
 - **RLS:** جداول المنشآت محمية بسياسات `app.facility_ids`؛ بوابة المريض بدور `hms_portal` مقيد `app.patient_id`؛ اختبارات تمنع التجاوز.
-- **الصلاحيات:** RBAC (20 دورًا، 74 صلاحية) + ABAC (علاقة علاجية للملف السريري، أو break-glass محدد المدة بسبب موثق وتنبيه إداري). لا يوجد «تجاوز مدير نظام»: حساب إداري لا يقرأ السجل السريري.
+- **الصلاحيات:** RBAC (22 دورًا، 81 صلاحية) + ABAC (علاقة علاجية للملف السريري، أو break-glass محدد المدة بسبب موثق وتنبيه إداري). لا يوجد «تجاوز مدير نظام»: حساب إداري لا يقرأ السجل السريري.
 - **CSRF** عبر رأس لكل طلب تعديل + فحص Origin، **Helmet/CSP**، **Rate limiting** (حد لصفحة الدخول)، **منع حقن SQL** (استعلامات معلمة فقط)، **تحقق مدخلات Zod** على كل مسار.
 - **التدقيق:** `audit_log` بسلسلة hash (SHA-256 مرتبطة بالسابق)، مشفّرة الترتيب بقفل صف؛ UPDATE/DELETE ممنوعة بـ trigger وREVOKE. كل قراءة ملف تُسجل في `patient_access_log`. تحقق السلسلة متاح من `/api/audit/verify`.
 - **الجلسات:** خادمية، مهلة خمول 30 د + حد مطلق 12 س، إبطال فوري، عرض/إبطال الجلسات، إعادة تعيين عند تغيير كلمة المرور، MFA عبر TOTP مع رموز استرداد.
@@ -76,7 +78,7 @@ npm start               # http://localhost:8080
 
 ## 5) واجهات API (مختصر)
 
-`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (قائمة زيارات المريض +vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/emergency/{board,arrivals,visits/:id/retriage,visits/:id/status,visits/:id/disposition,patients/:id/identify}` · `/api/reports[/:key]` (JSON/CSV) · `/api/nursing/{board,witnesses,patients/:id/mar,mar,care-plans,care-plan-tasks/:id/complete,handovers}` · `/api/surgery/{theatres,board,cases,cases/:id/checklists,cases/:id/start,cases/:id/anesthesia,cases/:id/close,cases/:id/recovery,cases/:id/cancel}` · `/api/icu/{board,stays,stays/:id,stays/:id/observations,stays/:id/ventilator,stays/:id/goals,stays/:id/sofa,stays/:id/discharge}` · `/api/radiology/{worklist,orders/:id/start,orders/:id/perform,orders/:id/reports,reports/:id/finalize,reports/:id/acknowledge,orders/:id/cancel}` · `/api/bloodbank/{stock,second-checkers,donors,requests,requests/:id/compatible-units,requests/:id/reserved-units,requests/:id/crossmatch,requests/:id/issue,units/:id,units/:id/transfuse,units/:id/discard,transfusions/:id/complete,transfusions/:id/reactions}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
+`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (قائمة زيارات المريض +vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/emergency/{board,arrivals,visits/:id/retriage,visits/:id/status,visits/:id/disposition,patients/:id/identify}` · `/api/reports[/:key]` (JSON/CSV) · `/api/nursing/{board,witnesses,patients/:id/mar,mar,care-plans,care-plan-tasks/:id/complete,handovers}` · `/api/surgery/{theatres,board,cases,cases/:id/checklists,cases/:id/start,cases/:id/anesthesia,cases/:id/close,cases/:id/recovery,cases/:id/cancel}` · `/api/icu/{board,stays,stays/:id,stays/:id/observations,stays/:id/ventilator,stays/:id/goals,stays/:id/sofa,stays/:id/discharge}` · `/api/radiology/{worklist,orders/:id/start,orders/:id/perform,orders/:id/reports,reports/:id/finalize,reports/:id/acknowledge,orders/:id/cancel}` · `/api/bloodbank/{stock,second-checkers,donors,requests,requests/:id/compatible-units,requests/:id/reserved-units,requests/:id/crossmatch,requests/:id/issue,units/:id,units/:id/transfuse,units/:id/discard,transfusions/:id/complete,transfusions/:id/reactions}` · `/api/nutrition/{board,screenings,assessments,diet-orders,diet-orders/:id/discontinue,diet-orders/:id/trays,kitchen,trays/:id/{prepare,deliver,intake},tube-orders,tube-orders/:id/stop,patients/:patientId,patients/:patientId/followups}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
 
 الكود هو العقد الفعلي (Zod + TypeScript). أخطاء موحدة: `{error:{code,message,details},requestId}`. التغييرات تتطلب رأس `x-csrf-token`، والمدفوعات/الصرف تقبل `Idempotency-Key`.
 
@@ -84,10 +86,10 @@ npm start               # http://localhost:8080
 
 ```
 $ npm test
- ✓ test/hms.test.ts  (75 tests)   ← رحلة مريض + طوارئ + تنويم + تمريض + عمليات + عناية مركزة + بنك دم + أشعة + تقارير + صلاحيات + RLS + تدقيق + FHIR
+ ✓ test/hms.test.ts  (82 tests)   ← رحلة مريض + طوارئ + تنويم + تمريض + عمليات + عناية مركزة + بنك دم + تغذية + أشعة + تقارير + صلاحيات + RLS + تدقيق + FHIR
  ✓ test/unit.test.ts (9 tests)    ← تشفير/TOTP/سلسلة التدقيق/CSV
  Test Files  2 passed (2)
-      Tests  84 passed (84)
+      Tests  91 passed (91)
 ```
 
 التفاصيل الكاملة لكل نوع من الأنواع العشرة المطلوبة في `docs/TEST_PLAN.md`. باختصار:
@@ -106,6 +108,7 @@ $ npm test
 | الأشعة والتقارير | ✅ 6 اختبارات (طلب، منع غير المخولين، تنفيذ، تقرير معتمد، ثبات التقرير، نتيجة حرجة واستلامها، إلغاء قبل التصوير) |
 | بنك الدم | ✅ 8 اختبارات (مخزون وحجب غير المخولين، مصفوفة ABO/Rh ورفض الوحدة غير المتوافقة، حجز مرة واحدة وسجل ملحق، صرف منفصل عن المختبر، مدقق ثانٍ مختلف وموافقة صريحة، تفاعل يستبعد الوحدة، صلاحية منتهية وفصيلة ناقصة، استبعاد مسبب) |
 | استضافة الواجهة | ✅ اختبار انحدار: تقديم SPA وذاكرة الأصل الثابتة (immutable) ورد JSON 404 لمسارات API المجهولة |
+| التغذية الطبية | ✅ 7 اختبارات (لوحة التغذية وحجب غير المخولين، فحص تمريضي ورفض تقييم التمريض، تقييم وهدف منحرف يلزمه سبب، أمر تغذية يرفض إغفال حساسية مسجلة، توليد صواني مرة واحدة وتسلسل التحضير/التسليم/الاستهلاك، تغذية أنبوبية بمسار واحد وإيقاف مسبب وسجل غير قابل للتغيير، متابعة أخصائي وملف غذائي) |
 | تدقيق مقاوم للعبث | ✅ تحقق السلسلة + رفض UPDATE/DELETE على السجلات المعتمدة |
 | أمن/تبعيات/اختراق | ⚠️ مغطى جزئيًا؛ **لا SAST/DAST/pen-test** |
 | أداء/تحمل · E2E · UAT · تجربة استعادة | ❌ **لم تُنفذ** |
@@ -125,7 +128,7 @@ $ npm test
 
 - **الرابط:** https://hospital-hms-cyan.vercel.app
 - **الحسابات:** نفس الحسابات التجريبية أعلاه (`@demo.hms`)، والبيانات تُزرع تلقائيًا عند أول تشغيل.
-- **حسابات إضافية:** `nurse2@demo.hms` و`radiology@demo.hms` و`radiologist@demo.hms` و`surgeon@demo.hms` و`anesthesia@demo.hms` و`ornurse@demo.hms` و`intensivist@demo.hms` و`icunurse@demo.hms` و`bloodbank@demo.hms` (كلمات المرور في أعلى الملف).
+- **حسابات إضافية:** `nurse2@demo.hms` و`radiology@demo.hms` و`radiologist@demo.hms` و`surgeon@demo.hms` و`anesthesia@demo.hms` و`ornurse@demo.hms` و`intensivist@demo.hms` و`icunurse@demo.hms` و`bloodbank@demo.hms` و`dietitian@demo.hms` و`kitchen@demo.hms` (كلمات المرور في أعلى الملف).
 - **الإعداد:** `NODE_ENV=production` · `COOKIE_SECURE=true` · `TRUST_PROXY=true` · `AUTO_BOOTSTRAP=true` · `SEED_DEMO=true` · `PGLITE_DIR=/tmp/hms-data` · وأسرار AES/HMAC بثلاثة مفاتيح `SESSION_SECRET` و`ENCRYPTION_KEY` و`SEARCH_HASH_KEY` (كل واحد base64 لـ32 بايت عشوائية؛ يتحقق منها `config.ts` برسالة واضحة).
 - **قيود صريحة:** قاعدة PGlite داخل الدالة تعمل على `/tmp`، أي أنها **مؤقتة** وتُعاد تهيئتها عند إعادة تشغيل الدالة (cold start) أو تغيّر النسخة. لذلك تظهر لافتة صريحة في الواجهة، وهذا **ليس** بديلًا عن قاعدة إنتاج.
 - **لجعلها دائمة:** اربط Postgres (Neon/Vercel Marketplace) واضبط `DB_MODE=postgres` و`DATABASE_URL` ثم أعد النشر؛ المخطط والهجرات والـRLS متطابقة.
@@ -153,6 +156,17 @@ $ npm test
 3. غيّر إعدادات التنفس (جرّب وضع «هواء محيط» مع FiO₂ 50% ليُرفض)، ثم احسب **SOFA** بعد إدخال PaO₂ وFiO₂ والصفيحات والبيليروبين وMAP وGCS والكرياتينين.
 4. ادخل بـ`icunurse@demo.hms` / `ICU#Demo2026` لتعبئة حزمة الرعاية اليومية — لا يستطيع التمريض فتح إقامة جديدة ولا إغلاقها.
 5. أغلق الإقامة بملاحظة ≥ ١٥ حرفًا؛ بعدها يُرفض أي قياس جديد وتُرفض إعادة الإغلاق.
+
+### جرّب التغذية الطبية (٥ دقائق)
+
+1. ادخل بـ`nurse@demo.hms` وافتح **التغذية الطبية** — المريض `MRN-0004` بخطورة «مرتفع» (نقاط ٦) وأمر تغذية سكري، و٤ صواني اليوم.
+2. سجّل فحص تغذية جديدًا (وزن/طول) مع إجراء موثق؛ جرّب حفظه بلا إجراء مع نقاط مرتفعة ليُرفض. الفحص سجل ملحق لا يُعدّل.
+3. ادخل بـ`dietitian@demo.hms` / `Nutrition#Demo2026`: احفظ تقييمًا (هدف ١٨٥٠ سعرة و٨٩ غ بروتين مقبول، وأي انحراف >٢٥٪ يحتاج سببًا)، ثم أصدر أمر تغذية — **سيُرفض** إن أغفلت قيدًا إلزاميًا من حساسية المريض.
+4. اضغط «توليد وجبات اليوم» مرة واحدة (٤ صواني)؛ إعادة الضغط لا تُكرر الصواني.
+5. ادخل بـ`kitchen@demo.hms` / `Kitchen#Demo2026`: حضّر صينية ثم سلّمها (لا تسليم قبل تحضير)، ثم سجّل بحساب التمريض نسبة الاستهلاك (لا استهلاك قبل تسليم، والصينية تصبح مقفلة).
+6. جرّب أمر تغذية أنبوبية على المسار `ng` ثم أمرًا ثانيًا على نفس المسار (يُرفض)، وأوقفه بسبب ≥ ٥ أحرف.
+
+**حدود التغذية:** لا قاعدة تراكيب غذائية ولا مخزون مطبخ ولا قائمة طعام؛ سعرات الصينية حصة ثابتة (٢٥/٣٥/٣٠/١٠٪) من هدف اليوم، وأهداف الطاقة/البروتين تقديرية حسب الوزن مع إمكانية انحراف مبرر. نقاط الخطر أداة فرز مستوحاة من NRS-2002 وليست جهازًا طبيًا معتمدًا.
 
 ### جرّب بنك الدم (٥ دقائق)
 
