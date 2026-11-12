@@ -47,7 +47,7 @@ erDiagram
   USERS ||--o{ BREAK_GLASS_GRANTS : emergency
 ```
 
-## الجداول (44)
+## الجداول (57)
 
 | المجموعة | الجداول |
 |---|---|
@@ -59,6 +59,8 @@ erDiagram
 | الصيدلية | `drugs`, `drug_batches`, `drug_interactions`, `prescriptions`, `prescription_items`, `dispenses`, `stock_movements` |
 | الفوترة | `insurance_policies`, `invoices`, `invoice_items`, `payments`, `insurance_claims` |
 | التنويم | `wards`, `rooms`, `beds`, `admissions`, `bed_transfers` |
+| التمريض | `medication_administrations`, `care_plans`, `care_plan_tasks`, `shift_handovers` |
+| الأشعة | `imaging_orders`, `imaging_reports` |
 | عرض للمريض | `portal_clinicians` (VIEW) |
 
 ## قيود سلامة مهمة
@@ -73,6 +75,9 @@ erDiagram
 | `drug_batches.qty_on_hand >= 0` | منع مخزون سالب |
 | `payments.amount > 0` + منع الدفع الزائد في الخدمة (`FOR UPDATE`) | سلامة الرصيد |
 | `clinical_notes` / `lab_result_amendments` / `stock_movements` / `audit_log` append-only | عدم فقد التاريخ |
+| `medication_administrations` ملحق فقط (trigger يرفض UPDATE/DELETE) + `mar_one_record_per_slot (prescription_item_id, scheduled_for)` | سجل إعطاء غير قابل للتحريف وجرعة واحدة لكل فترة |
+| `shift_handovers` يرفض UPDATE بعد الكتابة إلا لتسجيل الاستلام (`handover_guard`) | ثبات محتوى تسليم المناوبة |
+| `imaging_reports` يمنع تعديل التقرير بعد الاعتماد (`report_guard`) | ثبات التقرير المعتمد |
 | `hash_version` على `audit_log` | تطور خوارزمية السلسلة دون إبطال صامت |
 
 ## معايير الترميز المستخدمة
