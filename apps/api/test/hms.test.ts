@@ -1,5 +1,8 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
+import { promises as fsp } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 /**
  * End-to-end integration suite against a real PostgreSQL engine (PGlite) with
@@ -71,6 +74,7 @@ beforeAll(async () => {
   agents.orNurse = await login('ornurse@demo.hms', 'Nurse#Demo2026', 'orNurse');
   agents.intensivist = await login('intensivist@demo.hms', 'ICU#Demo2026', 'intensivist');
   agents.icuNurse = await login('icunurse@demo.hms', 'ICU#Demo2026', 'icuNurse');
+  agents.bloodTech = await login('bloodbank@demo.hms', 'Blood#Demo2026', 'bloodTech');
   agents.radTech = await login('radiology@demo.hms', 'Radiology#Demo2026', 'radTech');
   agents.radiologist = await login('radiologist@demo.hms', 'Radiology#Demo2026', 'radiologist');
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
@@ -91,6 +95,36 @@ afterAll(async () => {
   await app?.close();
   const { closeDb } = await import('../src/db/index');
   await closeDb();
+});
+
+describe('static SPA hosting', () => {
+  it('serves the shell, immutable asset caching and a JSON 404 for unknown API routes', async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'hms-web-'));
+    await fsp.mkdir(path.join(dir, 'assets'), { recursive: true });
+    await fsp.writeFile(path.join(dir, 'index.html'), '<!doctype html><div id="root"></div>');
+    await fsp.writeFile(path.join(dir, 'assets', 'app.js'), 'console.log(1)');
+    const { buildServer } = await import('../src/server');
+    const webApp = await buildServer({ logger: false, serveWeb: true, webDir: dir });
+    try {
+      const shell = await webApp.inject({ method: 'GET', url: '/any/spa/route' });
+      expect(shell.statusCode).toBe(200);
+      expect(shell.body).toContain('id="root"');
+
+      // Regression: @fastify/static v10 hands setHeaders the Fastify reply, so
+      // calling res.setHeader threw and turned every asset into a 500.
+      const asset = await webApp.inject({ method: 'GET', url: '/assets/app.js' });
+      expect(asset.statusCode).toBe(200);
+      expect(asset.headers['cache-control']).toContain('immutable');
+      expect(asset.body).toBe('console.log(1)');
+
+      const missingApi = await webApp.inject({ method: 'GET', url: '/api/does-not-exist' });
+      expect(missingApi.statusCode).toBe(404);
+      expect(missingApi.json().error.code).toBe('not_found');
+    } finally {
+      await webApp.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('authentication & session security', () => {
@@ -1868,5 +1902,305 @@ describe('intensive care: stays, charting, ventilation, bundle and SOFA', () => 
 
     const board = await expectStatus(await call(agents.intensivist, 'GET', '/api/icu/board'), 200, 'board after close');
     expect(board.items.find((i: any) => i.id === state.icuStayId)).toBeFalsy();
+  });
+});
+
+describe('blood bank: compatibility, cross-match, issue and transfusion safety', () => {
+  it('shows stock and the open request without leaking to non-clinical roles', async () => {
+    const stock = await expectStatus(await call(agents.bloodTech, 'GET', '/api/bloodbank/stock'), 200, 'stock');
+    expect(stock.totals.available).toBeGreaterThanOrEqual(10);
+    const rbc = stock.grid.filter((g: any) => g.component === 'rbc');
+    expect(rbc.length).toBeGreaterThanOrEqual(4);
+    expect((await call(agents.reception, 'GET', '/api/bloodbank/stock')).statusCode).toBe(403);
+
+    const requests = await expectStatus(await call(agents.bloodTech, 'GET', '/api/bloodbank/requests'), 200, 'requests');
+    const open = requests.items.find((r: any) => r.request_no === 'BLR-000001');
+    expect(open).toBeTruthy();
+    expect(open.patient_blood_type).toBe('A-');
+    expect(open.status).toBe('pending');
+    state.bloodRequestId = open.id;
+
+    // The requisition form needs the patient's open visit, not a guess: the
+    // encounter list is scoped to the chart and returns only that patient.
+    const encounters = await expectStatus(
+      await call(agents.doctor, 'GET', `/api/encounters?patientId=${open.patient_id}`),
+      200,
+      'open encounters',
+    );
+    expect(encounters.items.some((e: any) => e.id === open.encounter_id && e.status === 'open')).toBe(true);
+    expect(encounters.items.every((e: any) => e.status === 'open')).toBe(true);
+  });
+
+  it('evaluates ABO/Rh compatibility and only offers units a patient may receive', async () => {
+    const units = await expectStatus(
+      await call(agents.bloodTech, 'GET', `/api/bloodbank/requests/${state.bloodRequestId}/compatible-units`),
+      200,
+      'compatible units',
+    );
+    expect(units.compatibleCount).toBeGreaterThanOrEqual(2);
+    const byType = (t: string) => units.units.find((u: any) => u.blood_type === t);
+    expect(byType('O-').compatible).toBe(true);
+    expect(byType('A-').compatible).toBe(true);
+    expect(byType('A+').compatible).toBe(false);
+    expect(byType('A+').reason).toContain('العامل الريصي');
+    expect(byType('B+').reason).toContain('ABO');
+    state.compatibleUnitId = units.units.find((u: any) => u.blood_type === 'O-' && u.compatible).id;
+    state.incompatibleUnitId = units.units.find((u: any) => u.blood_type === 'B+').id;
+
+    // Only the blood bank technologist may cross-match.
+    expect((await call(agents.nurse2, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/crossmatch`, {
+      unitId: state.compatibleUnitId,
+    })).statusCode).toBe(403);
+  });
+
+  it('refuses an incompatible cross-match and reserves the compatible unit once', async () => {
+    const incompatible = await call(agents.bloodTech, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/crossmatch`, {
+      unitId: state.incompatibleUnitId,
+    });
+    expect(incompatible.statusCode).toBe(409);
+    expect(incompatible.json().error.details.patientType).toBe('A-');
+
+    const forced = await call(agents.bloodTech, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/crossmatch`, {
+      unitId: state.incompatibleUnitId, forceIncompatible: true,
+    });
+    expect(forced.statusCode).toBe(409);
+    expect(forced.json().error.message).toContain('سببًا سريريًا');
+
+    const ok = await expectStatus(
+      await call(agents.bloodTech, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/crossmatch`, {
+        unitId: state.compatibleUnitId, method: 'gel',
+      }),
+      201,
+      'compatible crossmatch',
+    );
+    expect(ok.result).toBe('compatible');
+    expect(ok.unitStatus).toBe('reserved');
+
+    const twice = await call(agents.bloodTech, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/crossmatch`, {
+      unitId: state.compatibleUnitId,
+    });
+    expect(twice.statusCode).toBe(409);
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.bloodTech.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE blood_crossmatches SET result = 'incompatible' WHERE unit_id = $1`, [state.compatibleUnitId]),
+      ),
+    ).rejects.toThrow(/append-only|permission denied/);
+  });
+
+  it('issues only a cross-matched reserved unit, and only the blood bank may issue', async () => {
+    const nurseIssue = await call(agents.nurse, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/issue`, {
+      unitId: state.compatibleUnitId,
+    });
+    expect(nurseIssue.statusCode).toBe(403);
+
+    const reserved = await expectStatus(
+      await call(agents.bloodTech, 'GET', `/api/bloodbank/requests/${state.bloodRequestId}/reserved-units`),
+      200,
+      'reserved units',
+    );
+    expect(reserved.items.some((u: any) => u.id === state.compatibleUnitId && u.match_result === 'compatible')).toBe(true);
+    expect((await call(agents.nurse, 'GET', `/api/bloodbank/requests/${state.bloodRequestId}/reserved-units`)).statusCode).toBe(403);
+
+    const issued = await expectStatus(
+      await call(agents.bloodTech, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/issue`, {
+        unitId: state.compatibleUnitId,
+      }),
+      201,
+      'issue unit',
+    );
+    expect(issued.status).toBe('issued');
+    expect(issued.bloodType).toBe('O-');
+
+    const again = await call(agents.bloodTech, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/issue`, {
+      unitId: state.compatibleUnitId,
+    });
+    expect(again.statusCode).toBe(409);
+  });
+
+  it('requires a second authorised checker before a transfusion can start', async () => {
+    const selfCheck = await call(agents.nurse, 'POST', `/api/bloodbank/units/${state.compatibleUnitId}/transfuse`, {
+      requestId: state.bloodRequestId, secondCheckerId: agents.nurse.me.user.id, consentConfirmed: true,
+    });
+    expect(selfCheck.statusCode).toBe(409);
+
+    const receptionCheck = await call(agents.nurse, 'POST', `/api/bloodbank/units/${state.compatibleUnitId}/transfuse`, {
+      requestId: state.bloodRequestId, secondCheckerId: agents.reception.me.user.id, consentConfirmed: true,
+    });
+    expect(receptionCheck.statusCode).toBe(409);
+
+    const missingConsent = await call(agents.nurse, 'POST', `/api/bloodbank/units/${state.compatibleUnitId}/transfuse`, {
+      requestId: state.bloodRequestId, secondCheckerId: agents.nurse2.me.user.id,
+    });
+    expect(missingConsent.statusCode).toBe(400);
+
+    // Bedside UI must be able to offer only staff who actually hold the
+    // transfusion permission in this facility.
+    const checkers = await expectStatus(
+      await call(agents.nurse, 'GET', '/api/bloodbank/second-checkers'),
+      200,
+      'second checkers',
+    );
+    expect(checkers.items.some((u: any) => u.id === agents.nurse2.me.user.id)).toBe(true);
+    expect(checkers.items.every((u: any) => !!u.role_name)).toBe(true);
+    expect((await call(agents.reception, 'GET', '/api/bloodbank/second-checkers')).statusCode).toBe(403);
+
+    const started = await expectStatus(
+      await call(agents.nurse, 'POST', `/api/bloodbank/units/${state.compatibleUnitId}/transfuse`, {
+        requestId: state.bloodRequestId,
+        secondCheckerId: agents.nurse2.me.user.id,
+        preHeartRate: 96, preSystolicBp: 124, preSpo2: 93, preTemperatureC: 37.5,
+        consentConfirmed: true,
+      }),
+      201,
+      'start transfusion',
+    );
+    state.transfusionId = started.id;
+    expect(started.secondChecker).toBe('ليلى العمري');
+  });
+
+  it('blocks a severe reaction until the transfusion is stopped, then quarantines the unit', async () => {
+    const early = await call(agents.nurse, 'POST', `/api/bloodbank/transfusions/${state.transfusionId}/reactions`, {
+      reactionType: 'febrile', severity: 'severe',
+      description: 'حرارة 39.5 ورجفة شديدة بعد بدء النقل', actionTaken: 'أوقفنا النقل',
+    });
+    expect(early.statusCode).toBe(409);
+
+    await expectStatus(
+      await call(agents.nurse, 'POST', `/api/bloodbank/transfusions/${state.transfusionId}/complete`, {
+        outcome: 'stopped_reaction', volumeTransfusedMl: 110,
+        postHeartRate: 104, postSystolicBp: 118, postTemperatureC: 38.9,
+        notes: 'أُوقف النقل بعد 110 مل لارتفاع الحرارة',
+      }),
+      200,
+      'stop transfusion',
+    );
+
+    const reaction = await expectStatus(
+      await call(agents.nurse, 'POST', `/api/bloodbank/transfusions/${state.transfusionId}/reactions`, {
+        reactionType: 'febrile', severity: 'severe',
+        description: 'حرارة 39.5 ورجفة شديدة بعد بدء النقل',
+        actionTaken: 'أُوقف النقل وأُعطي خافض حرارة وأُرسلت وحدة الزراعة',
+      }),
+      201,
+      'report reaction',
+    );
+    expect(reaction.unitQuarantined).toBe(true);
+
+    const trace = await expectStatus(
+      await call(agents.bloodTech, 'GET', `/api/bloodbank/units/${state.compatibleUnitId}`),
+      200,
+      'unit traceability',
+    );
+    expect(trace.status).toBe('discarded');
+    expect(trace.discard_reason).toContain('تفاعل نقل');
+    expect(trace.transfusions[0].outcome).toBe('stopped_reaction');
+    expect(trace.transfusions[0].reaction.severity).toBe('severe');
+    expect(trace.crossmatches[0].result).toBe('compatible');
+
+    const second = await call(agents.nurse, 'POST', `/api/bloodbank/transfusions/${state.transfusionId}/reactions`, {
+      reactionType: 'allergic', severity: 'mild',
+      description: 'طفح جلدي خفيف بعد النقل', actionTaken: 'مضاد هيستامين',
+    });
+    expect(second.statusCode).toBe(409);
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.bloodTech.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE blood_reactions SET severity = 'mild' WHERE transfusion_id = $1`, [state.transfusionId]),
+      ),
+    ).rejects.toThrow(/append-only|permission denied/);
+  });
+
+  it('never issues an expired unit and refuses a request when the patient blood type is unknown', async () => {
+    const donor = await expectStatus(
+      await call(agents.bloodTech, 'POST', '/api/bloodbank/donors', {
+        bloodType: 'O-', hemoglobin: 14.1,
+        hbvNegative: true, hcvNegative: true, hivNegative: true, syphilisNegative: true,
+        units: [{ component: 'rbc', volumeMl: 450, expiresInDays: 1 }],
+      }),
+      201,
+      'donor',
+    );
+    expect(donor.units).toBe(1);
+
+    const stock = await expectStatus(await call(agents.bloodTech, 'GET', '/api/bloodbank/stock'), 200, 'stock after donation');
+    const shortDated = stock.units.filter((u: any) => u.status === 'available').sort((a: any, b: any) => a.days_left - b.days_left)[0];
+    expect(shortDated).toBeTruthy();
+
+    // Age the unit out at the database level (collection moved back so the
+    // expires_at > collected_at constraint still holds), then confirm both
+    // cross-match and issue refuse it.
+    await db.asRole('hms_app', { 'app.facility_ids': agents.bloodTech.me.activeFacilityId }, (q: any) =>
+      q.query(
+        `UPDATE blood_units
+            SET collected_at = now() - interval '45 days',
+                expires_at   = now() - interval '1 hour'
+          WHERE id = $1`,
+        [shortDated.id],
+      ),
+    );
+    const expiredCross = await call(agents.bloodTech, 'POST', `/api/bloodbank/requests/${state.bloodRequestId}/crossmatch`, {
+      unitId: shortDated.id,
+    });
+    expect(expiredCross.statusCode).toBe(409);
+    expect(expiredCross.json().error.message).toContain('منتهية');
+
+    const noTypePatient = await expectStatus(
+      await call(agents.reception, 'POST', '/api/patients', {
+        fullNameAr: 'ماجد سعد الغامدي', dateOfBirth: '1975-05-05', sex: 'male', acknowledgeDuplicate: true,
+      }),
+      201,
+      'patient without blood type',
+    );
+    await expectStatus(
+      await call(agents.reception, 'POST', '/api/appointments', {
+        patientId: noTypePatient.patient.id,
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'GEN').id,
+        doctorId: agents.doctor.me.user.id,
+        scheduledAt: new Date(Date.now() + 5_400_000).toISOString(),
+      }),
+      201,
+      'appointment for blood request',
+    );
+    const encounter = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/encounters', {
+        patientId: noTypePatient.patient.id,
+        encounterType: 'outpatient',
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'GEN').id,
+        chiefComplaint: 'فقر دم يحتاج تقييم نقل دم',
+      }),
+      201,
+      'encounter for blood request',
+    );
+    const noType = await call(agents.doctor, 'POST', '/api/bloodbank/requests', {
+      patientId: noTypePatient.patient.id,
+      encounterId: encounter.id,
+      component: 'rbc',
+      unitsRequested: 1,
+      indication: 'هبوط هيموغلوبين دون تسجيل فصيلة',
+    });
+    expect(noType.statusCode).toBe(409);
+    expect(noType.json().error.message).toContain('فصيلة');
+  });
+
+  it('discards a unit with a documented reason and refuses to delete the record', async () => {
+    const stock = await expectStatus(await call(agents.bloodTech, 'GET', '/api/bloodbank/stock'), 200, 'stock for discard');
+    const candidate = stock.units.find((u: any) => u.status === 'available' && u.component === 'rbc');
+    const shortReason = await call(agents.bloodTech, 'POST', `/api/bloodbank/units/${candidate.id}/discard`, { reason: 'تلف' });
+    expect(shortReason.statusCode).toBe(400);
+
+    await expectStatus(
+      await call(agents.bloodTech, 'POST', `/api/bloodbank/units/${candidate.id}/discard`, {
+        reason: 'كيس متسرب عند الفحص البصري',
+      }),
+      200,
+      'discard',
+    );
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.bloodTech.me.activeFacilityId }, (q: any) =>
+        q.query(`DELETE FROM blood_units WHERE id = $1`, [candidate.id]),
+      ),
+    ).rejects.toThrow(/permission denied|foreign key|violates/);
   });
 });

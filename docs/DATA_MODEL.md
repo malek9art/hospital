@@ -1,7 +1,7 @@
 # نموذج البيانات وقاعدة البيانات
 
 - **المحرك:** PostgreSQL 18 (التطوير عبر PGlite بنفس المحرك، والإنتاج عبر `pg`).
-- **الترحيلات:** `db/migrations/*.sql` (001..008) تُطبَّق بترتيب اسمي، وتُسجَّل في `schema_migrations` مع checksum؛ تعديل ملف مطبَّق يوقف الترحيل (يمنع الانحراف).
+- **الترحيلات:** `db/migrations/*.sql` (001..015) تُطبَّق بترتيب اسمي، وتُسجَّل في `schema_migrations` مع checksum؛ تعديل ملف مطبَّق يوقف الترحيل (يمنع الانحراف).
 - **الأدوار:** `hms_owner` (ترحيلات فقط) / `hms_app` (عمل الموظفين، RLS مفروض) / `hms_portal` (المريض، RLS بمستوى المريض).
 - **الجلسة:** كل معاملة تُنفّذ `SET LOCAL ROLE` + `set_config('app.facility_ids'|'app.patient_id', …, true)` فلا تتسرب الصلاحيات بين الطلبات.
 
@@ -47,7 +47,7 @@ erDiagram
   USERS ||--o{ BREAK_GLASS_GRANTS : emergency
 ```
 
-## الجداول (67)
+## الجداول (73)
 
 | المجموعة | الجداول |
 |---|---|
@@ -63,6 +63,7 @@ erDiagram
 | الأشعة | `imaging_orders`, `imaging_reports` |
 | العمليات والتخدير | `operating_theatres`, `surgical_cases`, `surgical_checklists`, `anesthesia_records`, `pacu_records` |
 | العناية المركزة | `icu_stays`, `icu_observations`, `icu_ventilator_settings`, `icu_daily_goals`, `icu_scores` |
+| بنك الدم | `blood_donors`, `blood_units`, `blood_requests`, `blood_crossmatches`, `blood_transfusions`, `blood_reactions` |
 | عرض للمريض | `portal_clinicians` (VIEW) |
 
 ## قيود سلامة مهمة
@@ -83,6 +84,11 @@ erDiagram
 | `surgical_checklists` / `anesthesia_records` / `pacu_records` ملحق فقط، و`surgical_cases` مغلقة بعد الإكمال أو الإلغاء | ثبات السجل الجراحي وقوائم السلامة |
 | `UNIQUE (theatre_id, scheduled_at)` + فحص تقاطع الأوقات في الـAPI | منع جدولة عمليتين في غرفة واحدة |
 | `icu_observations` / `icu_ventilator_settings` / `icu_scores` ملحق فقط، وإقامة العناية مجمّدة بعد الإغلاق، وفهرس فريد لإقامة نشطة لكل تنويم/سرير | سلامة ملف العناية المركزة ومنع الازدواج |
+| `blood_units` حالة محددة + `expires_at > collected_at` + `UNIQUE (facility_id, unit_no)` | صلاحية الوحدة وعدم تكرار رقمها |
+| `blood_crossmatches` / `blood_transfusions` ملحق فقط (trigger) و`UNIQUE (unit_id)` على كل منهما | فحص توافق واحد ونقل واحد لكل وحدة، ومنع تحريف القرار |
+| `blood_transfusions` مدقق ثانٍ مختلف إلزامي (`second_checker_id <> started_by`) | فصل المهام عند السرير |
+| `blood_reactions` واحد لكل نقل، ويُقفل بعد المراجعة (`blood_reaction_review_guard`) | عدم تكرار/تعديل تقرير التفاعل |
+| `blood_requests` لا يُصدَر إلا بعد حجز وحدة متوافقة (فحص في الـAPI) وفهرس طلب مفتوح لكل مريض | تسلسل آمن ومنع الطلبات المتعارضة |
 | `hash_version` على `audit_log` | تطور خوارزمية السلسلة دون إبطال صامت |
 
 ## معايير الترميز المستخدمة
@@ -91,3 +97,4 @@ erDiagram
 - **LOINC**: `lab_tests.code` يحمل رموز LOINC (مجموعة تجريبية صغيرة: 718-7، 6690-2، 2345-7، 2160-0، 4548-4).
 - **FHIR R4**: واجهة قراءة جزئية (Patient/Observation) وليست تنفيذًا معتمدًا.
 - **SNOMED CT / DICOM**: غير مستخدمة/غير منفذة (تتطلب ترخيصًا/تكاملًا).
+- **بنك الدم**: لا يستخدم ترميز ISBT 128 ولا مفردات فصائل معقدة؛ الحقول `component` و`blood_type` مجموعات محددة بقيد CHECK، وقرار التوافق من جدول ABO/Rh ثابت في `modules/bloodbank/routes.ts` (بلا أجسام مضادة أو معايرة عيار).

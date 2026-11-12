@@ -38,6 +38,39 @@ const NoteSchema = z.object({
 });
 
 export async function encounterRoutes(app: FastifyInstance) {
+  // Open encounters for one patient — used by modules that must attach a record
+  // to an existing visit (blood-bank requests, for example) without guessing.
+  app.get('/api/encounters', async (req) => {
+    const auth = requireAuth(req);
+    requirePermission(auth, 'clinical.encounter.read');
+    const q = parse(
+      z.object({
+        patientId: zId,
+        status: z.enum(['open', 'closed', 'all']).default('open'),
+      }),
+      req.query,
+    );
+    return withTenant(auth, async (db) => {
+      const patient = await loadPatientOr404(db, q.patientId);
+      await authorizeChartAccess(db, auth, patient, 'clinical', { ip: req.ip, accessType: 'encounter_list' });
+      const params: unknown[] = [auth.activeFacilityId, q.patientId];
+      let filter = '';
+      if (q.status !== 'all') {
+        params.push(q.status);
+        filter = ` AND e.status = $${params.length}`;
+      }
+      const rows = await db.query(
+        `SELECT e.id, e.encounter_no, e.encounter_type, e.status, e.chief_complaint,
+                e.started_at, e.closed_at, d.name_ar AS department_name
+           FROM encounters e LEFT JOIN departments d ON d.id = e.department_id
+          WHERE e.facility_id = $1 AND e.patient_id = $2${filter}
+          ORDER BY e.started_at DESC LIMIT 50`,
+        params,
+      );
+      return { patientId: q.patientId, status: q.status, items: rows.rows };
+    });
+  });
+
   app.post('/api/encounters', async (req, reply) => {
     const auth = requireAuth(req);
     requirePermission(auth, 'clinical.encounter.create');

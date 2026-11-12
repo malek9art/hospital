@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'icu' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'icu' | 'bloodbank' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -12,6 +12,8 @@ const STATUS: Record<string, string> = {
   booked: 'محجوز', checked_in: 'حضر', in_consultation: 'في الاستشارة', completed: 'مكتمل', cancelled: 'ملغى', no_show: 'لم يحضر',
   open: 'مفتوحة', closed: 'مغلقة', ordered: 'مطلوب', collected: 'تم جمع العينة', resulted: 'نتيجة مسجلة', verified: 'معتمدة',
   issued: 'صادرة', partially_dispensed: 'صرف جزئي', dispensed: 'مصروفة', paid: 'مدفوعة', partially_paid: 'مدفوعة جزئيًا', void: 'ملغاة',
+  available: 'متاحة', reserved: 'محجوزة', transfused: 'مُنقلة', discarded: 'مستبعدة',
+  pending: 'قيد الانتظار', crossmatched: 'مطابقة', stopped_reaction: 'أُوقف لتفاعل', stopped_other: 'أُوقف لسبب آخر',
 };
 
 function Badge({ value }: { value: string }) {
@@ -56,6 +58,7 @@ function LoginPage({ onLogin, notice }: { onLogin: (m: Me) => void; notice?: str
     ['مختبر', 'lab@demo.hms', 'Lab#Demo2026'], ['صيدلي', 'pharmacist@demo.hms', 'Pharma#Demo2026'],
     ['محاسب', 'accountant@demo.hms', 'Account#Demo2026'], ['مدير النظام', 'admin@demo.hms', 'Admin#Demo2026'],
     ['مدقق', 'auditor@demo.hms', 'Auditor#Demo2026'], ['مريض', 'patient@demo.hms', 'Patient#Demo2026'],
+    ['بنك الدم', 'bloodbank@demo.hms', 'Blood#Demo2026'],
   ];
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
@@ -1621,6 +1624,370 @@ function Modules() {
   );
 }
 
+// ------------------------------------------------------------- Blood bank ----
+const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+const COMPONENT_AR: Record<string, string> = { rbc: 'كريات حمراء', ffp: 'بلازما مجمدة', platelets: 'صفائح', cryo: 'راسب قري' };
+const URGENCY_AR: Record<string, string> = { routine: 'روتيني', urgent: 'عاجل', emergency: 'طارئ' };
+const REACTION_AR: Record<string, string> = { febrile: 'حمّوي', allergic: 'تحسسي', hemolytic: 'انحلالي', trali: 'TRALI', taco: 'TACO', septic: 'إنتاني', other: 'أخرى' };
+const SEVERITY_AR: Record<string, string> = { mild: 'خفيف', moderate: 'متوسط', severe: 'شديد', life_threatening: 'مهدد للحياة' };
+const OUTCOME_AR: Record<string, string> = { completed: 'مكتمل', stopped_reaction: 'أُوقف لتفاعل', stopped_other: 'أُوقف لسبب آخر' };
+
+function BloodBank({ m }: { m: Me }) {
+  const [stock, setStock] = useState<any>(null);
+  const [requestList, setRequestList] = useState<any[]>([]);
+  const [filter, setFilter] = useState('active');
+  const [sel, setSel] = useState<any>(null);
+  const [match, setMatch] = useState<any>(null);
+  const [reserved, setReserved] = useState<any[]>([]);
+  const [unit, setUnit] = useState<any>(null);
+  const [checkers, setCheckers] = useState<any[]>([]);
+  const [patients, setPatients] = useState<any[]>([]);
+  const [encounters, setEncounters] = useState<any[]>([]);
+  const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+
+  const [donor, setDonor] = useState<any>({ bloodType: 'O+', hemoglobin: '', hbv: true, hcv: true, hiv: true, syphilis: true, deferralReason: '', components: ['rbc'] });
+  const [req, setReq] = useState<any>({ patientId: '', encounterId: '', component: 'rbc', unitsRequested: 2, urgency: 'routine', indication: '', hbValue: '' });
+  const [override, setOverride] = useState('');
+  const [tx, setTx] = useState<any>({ secondCheckerId: '', preHeartRate: '', preSystolicBp: '', preTemperatureC: '', preSpo2: '', consent: false });
+  const [closing, setClosing] = useState<any>({ outcome: 'completed', volumeTransfusedMl: '', notes: '' });
+  const [reaction, setReaction] = useState<any>({ reactionType: 'febrile', severity: 'mild', description: '', actionTaken: '' });
+  const [discard, setDiscard] = useState('');
+
+  async function loadStock() {
+    try { setStock(await api<any>('/api/bloodbank/stock')); } catch (e: any) { setErr(e.message); }
+  }
+  async function loadRequests() {
+    try { const r = await api<any>(`/api/bloodbank/requests?status=${filter}`); setRequestList(r.items ?? []); } catch (e: any) { setErr(e.message); }
+  }
+  useEffect(() => {
+    loadStock(); loadRequests();
+    if (has(m, 'bloodbank.transfuse')) api<any>('/api/bloodbank/second-checkers').then((r) => setCheckers(r.items ?? [])).catch(() => setCheckers([]));
+    if (has(m, 'bloodbank.request')) api<any>('/api/patients?limit=100').then((r) => setPatients(r.items ?? [])).catch(() => setPatients([]));
+  }, [filter]);
+
+  async function refreshAll() {
+    await loadStock();
+    try {
+      const r = await api<any>(`/api/bloodbank/requests?status=${filter}`);
+      setRequestList(r.items ?? []);
+      if (sel) setSel((r.items ?? []).find((x: any) => x.id === sel.id) ?? sel);
+    } catch { /* handled by load */ }
+    if (sel && has(m, 'bloodbank.crossmatch')) {
+      try { setMatch(await api<any>(`/api/bloodbank/requests/${sel.id}/compatible-units`)); } catch { /* stale panel is fine */ }
+    }
+    if (sel && has(m, 'bloodbank.issue')) {
+      try { const x = await api<any>(`/api/bloodbank/requests/${sel.id}/reserved-units`); setReserved(x.items ?? []); } catch { /* ignore */ }
+    }
+    if (unit) { try { setUnit(await api<any>(`/api/bloodbank/units/${unit.id}`)); } catch { /* ignore */ } }
+  }
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); await refreshAll(); }
+    catch (e: any) { setErr(e.message + (e.details ? ` — ${JSON.stringify(e.details)}` : '')); }
+  }
+  async function openRequest(r: any) {
+    setSel(r); setMatch(null); setReserved([]); setOverride(''); setUnit(null); setErr(null); setOk(null);
+    if (has(m, 'bloodbank.crossmatch')) {
+      try { setMatch(await api<any>(`/api/bloodbank/requests/${r.id}/compatible-units`)); } catch (e: any) { setErr(e.message); }
+    }
+    if (has(m, 'bloodbank.issue')) {
+      try { const x = await api<any>(`/api/bloodbank/requests/${r.id}/reserved-units`); setReserved(x.items ?? []); } catch (e: any) { setErr(e.message); }
+    }
+  }
+  async function openUnit(id: string) {
+    setErr(null); setOk(null); setDiscard(''); setOverride('');
+    try { setUnit(await api<any>(`/api/bloodbank/units/${id}`)); } catch (e: any) { setErr(e.message); }
+  }
+  async function pickPatient(patientId: string) {
+    setReq({ ...req, patientId, encounterId: '' }); setEncounters([]);
+    if (!patientId) return;
+    try {
+      const r = await api<any>(`/api/encounters?patientId=${patientId}`);
+      setEncounters(r.items ?? []);
+      if ((r.items ?? [])[0]) setReq((cur: any) => ({ ...cur, patientId, encounterId: r.items[0].id }));
+    } catch (e: any) { setErr(e.message); }
+  }
+
+  const selectedPatient = patients.find((p) => p.id === req.patientId);
+  const latestMatch = unit?.crossmatches?.length ? [...unit.crossmatches].reverse().find((c: any) => c.result === 'compatible') ?? unit.crossmatches[unit.crossmatches.length - 1] : null;
+  const activeTx = (unit?.transfusions ?? []).find((t: any) => !t.completed_at);
+  const doneTx = (unit?.transfusions ?? []).find((t: any) => t.completed_at);
+  const anyReaction = (unit?.transfusions ?? []).some((t: any) => t.reaction);
+  const hasScreeningPass = donor.hbv && donor.hcv && donor.hiv && donor.syphilis;
+
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+
+      {stock && <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {[['وحدات متاحة', stock.totals.available], ['محجوزة', stock.totals.reserved], ['مصروفة', stock.totals.issued], ['منتهية الصلاحية', stock.totals.expired], ['نُقلت اليوم', stock.totals.transfused_today]].map(([l, v]) => (
+          <div key={String(l)} className="card p-3"><p className="text-xs text-slate-500">{l}</p><p className="text-xl font-bold">{v as any}</p></div>
+        ))}
+      </div>}
+
+      <Card title="مخزون بنك الدم">
+        <p className="text-[11px] text-slate-500 mb-2">جدول ABO/Rh مطبَّق على الخادم؛ فحص العامل الريصي إلزامي لكرات الدم والصفائح. لا فحص أجسام مضادة ولا تكامل مع بنك دم وطني.</p>
+        <div className="overflow-x-auto"><table className="w-full min-w-[720px]"><thead><tr>
+          <th className="th">المكوّن</th>{BLOOD_TYPES.map((t) => <th key={t} className="th text-center">{t}</th>)}
+        </tr></thead><tbody>
+          {Object.keys(COMPONENT_AR).map((c) => <tr key={c}>
+            <td className="td font-semibold">{COMPONENT_AR[c]}</td>
+            {BLOOD_TYPES.map((t) => {
+              const g = (stock?.grid ?? []).find((x: any) => x.component === c && x.blood_type === t);
+              const n = g?.available ?? 0;
+              return <td key={t} className={`td text-center ${n > 0 ? 'font-bold text-emerald-700' : 'text-slate-300'}`}>
+                {n || '—'}{g?.reserved ? <span className="block text-[11px] font-normal text-amber-700">محجوز {g.reserved}</span> : null}
+              </td>;
+            })}
+          </tr>)}
+        </tbody></table></div>
+
+        <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[760px]"><thead><tr>
+          <th className="th">الوحدة</th><th className="th">المكوّن</th><th className="th">الفصيلة</th><th className="th">الصلاحية</th><th className="th">الحالة</th><th className="th">المتبرع</th><th className="th"></th>
+        </tr></thead><tbody>
+          {(stock?.units ?? []).map((u: any) => <tr key={u.id} className={u.expired ? 'bg-rose-50/70' : ''}>
+            <td className="td text-xs font-mono">{u.unit_no}</td>
+            <td className="td text-xs">{u.component_ar}</td>
+            <td className="td text-xs font-semibold">{u.blood_type}</td>
+            <td className="td text-xs">{u.expired ? <span className="text-rose-700">منتهية</span> : <span className={u.days_left <= 5 ? 'text-amber-700 font-semibold' : ''}>{u.days_left} يوم</span>}
+              <span className="block text-[11px] text-slate-400">{dt(u.expires_at)}</span></td>
+            <td className="td"><Badge value={u.status} /></td>
+            <td className="td text-xs">{u.donor_no}</td>
+            <td className="td"><button className="btn-ghost text-xs" onClick={() => openUnit(u.id)}>تفاصيل</button></td>
+          </tr>)}
+          {(stock?.units ?? []).length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا وحدات في المخزون.</td></tr>}
+        </tbody></table></div>
+      </Card>
+
+      <Card title="طلبات الدم" action={<div className="flex gap-1">
+        <button className={`btn-ghost text-xs ${filter === 'active' ? 'bg-slate-100' : ''}`} onClick={() => setFilter('active')}>النشطة</button>
+        <button className={`btn-ghost text-xs ${filter === 'all' ? 'bg-slate-100' : ''}`} onClick={() => setFilter('all')}>الكل</button>
+      </div>}>
+        <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr>
+          <th className="th">الطلب</th><th className="th">المريض</th><th className="th">المكوّن</th><th className="th">الوحدات</th><th className="th">الأولوية</th><th className="th">الحالة</th><th className="th">الاستطباب</th><th className="th"></th>
+        </tr></thead><tbody>
+          {requestList.map((r: any) => <tr key={r.id}>
+            <td className="td text-xs font-mono">{r.request_no}<span className="block text-slate-400">{dt(r.requested_at)}</span></td>
+            <td className="td text-xs">{r.patient_name}<span className="block text-slate-400">{r.mrn} · {r.patient_blood_type ?? 'فصيلة غير مسجلة'}</span></td>
+            <td className="td text-xs">{r.component_ar}</td>
+            <td className="td text-xs">{r.transfused_units}/{r.units_requested}</td>
+            <td className="td text-xs"><span className={r.urgency === 'emergency' ? 'badge bg-rose-100 text-rose-700' : r.urgency === 'urgent' ? 'badge bg-amber-100 text-amber-700' : 'badge bg-slate-100 text-slate-700'}>{URGENCY_AR[r.urgency]}</span></td>
+            <td className="td"><Badge value={r.status} /></td>
+            <td className="td text-xs max-w-[220px]">{r.indication}</td>
+            <td className="td"><button className="btn-ghost text-xs" onClick={() => openRequest(r)}>المطابقة والصرف</button></td>
+          </tr>)}
+          {requestList.length === 0 && <tr><td className="td text-slate-500" colSpan={8}>لا طلبات بهذه الحالة.</td></tr>}
+        </tbody></table></div>
+      </Card>
+
+      {sel && <Card title={`طلب ${sel.request_no} — ${sel.patient_name}`} action={<button className="btn-ghost text-xs" onClick={() => { setSel(null); setMatch(null); setReserved([]); }}>إغلاق</button>}>
+        <div className="text-xs text-slate-600 space-y-1">
+          <p>فصيلة المريض: <b>{sel.patient_blood_type ?? 'غير مسجلة'}</b> · المكوّن: {sel.component_ar} · الوحدات المطلوبة: {sel.units_requested} · الحالة: <Badge value={sel.status} /></p>
+          <p>الزيارة {sel.encounter_no} · طلبها {sel.requested_by_name} · {dt(sel.requested_at)}</p>
+          <p>الاستطباب: {sel.indication}{sel.hb_value ? ` · Hb ${sel.hb_value}` : ''}{sel.platelets_value ? ` · صفائح ${sel.platelets_value}` : ''}</p>
+        </div>
+
+        {reserved.length > 0 && <div className="mt-3 border-t pt-2">
+          <p className="text-sm font-semibold mb-1">وحدات محجوزة جاهزة للصرف</p>
+          <table className="w-full"><tbody>
+            {reserved.map((u: any) => <tr key={u.id}>
+              <td className="td text-xs font-mono">{u.unit_no}</td>
+              <td className="td text-xs">{u.blood_type} · {u.component_ar}</td>
+              <td className="td text-xs">{u.days_left} يوم</td>
+              <td className="td text-xs">{u.match_result === 'compatible' ? 'متوافقة' : 'تجاوز موثق'}</td>
+              <td className="td">{has(m, 'bloodbank.issue') && <button className="btn-primary text-xs" onClick={() => act(() => api(`/api/bloodbank/requests/${sel.id}/issue`, { method: 'POST', body: JSON.stringify({ unitId: u.id }) }), `صُرفت الوحدة ${u.unit_no}`)}>صرف للجناح</button>}</td>
+            </tr>)}
+          </tbody></table>
+        </div>}
+
+        {match && <div className="mt-3 border-t pt-2">
+          <p className="text-sm font-semibold mb-1">وحدات متاحة للفحص — متوافقة {match.compatibleCount} من {match.units.length}</p>
+          <div className="overflow-x-auto"><table className="w-full min-w-[700px]"><thead><tr>
+            <th className="th">الوحدة</th><th className="th">الفصيلة</th><th className="th">الصلاحية</th><th className="th">النتيجة</th><th className="th"></th>
+          </tr></thead><tbody>
+            {match.units.map((u: any) => <tr key={u.id}>
+              <td className="td text-xs font-mono">{u.unit_no}</td>
+              <td className="td text-xs">{u.blood_type}</td>
+              <td className="td text-xs">{u.days_left} يوم</td>
+              <td className="td text-xs">{u.compatible ? <span className="text-emerald-700">متوافقة</span> : <span className="text-rose-700">{u.reason}</span>}</td>
+              <td className="td">{has(m, 'bloodbank.crossmatch') && (u.compatible
+                ? <button className="btn-primary text-xs" onClick={() => act(() => api(`/api/bloodbank/requests/${sel.id}/crossmatch`, { method: 'POST', body: JSON.stringify({ unitId: u.id, method: 'gel' }) }), `حُجزت الوحدة ${u.unit_no}`)}>فحص وحجز</button>
+                : <div className="flex flex-wrap items-center gap-1">
+                    <input className="input !w-40 text-xs" placeholder="سبب سريري للتجاوز" value={override} onChange={(e) => setOverride(e.target.value)} />
+                    <button className="btn-ghost text-xs" disabled={override.trim().length < 5}
+                      onClick={() => act(() => api(`/api/bloodbank/requests/${sel.id}/crossmatch`, { method: 'POST', body: JSON.stringify({ unitId: u.id, method: 'gel', forceIncompatible: true, note: override }) }), 'سُجّل تجاوز موثق (لا يسمح بالصرف)')}>تجاوز موثق</button>
+                  </div>)}
+              </td>
+            </tr>)}
+            {match.units.length === 0 && <tr><td className="td text-slate-500" colSpan={5}>لا وحدات متاحة من هذا المكوّن.</td></tr>}
+          </tbody></table></div>
+          <p className="text-[11px] text-slate-500 mt-1">التجاوز الموثق يسجّل قرارًا سريريًا ولا يمنح إمكانية الصرف؛ الصرف يتطلب فحص توافق ناجحًا.</p>
+        </div>}
+      </Card>}
+
+      {unit && <Card title={`الوحدة ${unit.unit_no} — ${COMPONENT_AR[unit.component]}`} action={<button className="btn-ghost text-xs" onClick={() => setUnit(null)}>إغلاق</button>}>
+        <div className="grid sm:grid-cols-2 gap-2 text-xs text-slate-600">
+          <div className="space-y-1">
+            <p>الفصيلة: <b>{unit.blood_type}</b> · الحجم: {unit.volume_ml ?? '—'} مل · الحالة: <Badge value={unit.status} /></p>
+            <p>المتبرع: {unit.donor_no} · الجمع: {dt(unit.collected_at)}</p>
+            <p>الصلاحية: {dt(unit.expires_at)} {unit.expires_at && new Date(unit.expires_at) <= new Date() && <span className="text-rose-700"> (منتهية)</span>}</p>
+            {unit.patient_name && <p>المريض: {unit.patient_name} · {unit.patient_mrn}</p>}
+            {unit.discard_reason && <p className="text-rose-700">سبب الاستبعاد: {unit.discard_reason}</p>}
+          </div>
+          <div className="space-y-1">
+            <p>فحوص المتبرع: HBV {unit.screening?.hbv ? 'سلبي' : 'إيجابي'} · HCV {unit.screening?.hcv ? 'سلبي' : 'إيجابي'} · HIV {unit.screening?.hiv ? 'سلبي' : 'إيجابي'} · الزهري {unit.screening?.syphilis ? 'سلبي' : 'إيجابي'}</p>
+            <p>فحوص التوافق: {unit.crossmatches?.length ? unit.crossmatches.map((c: any) => `${c.request_no}: ${c.result === 'compatible' ? 'متوافق' : 'غير متوافق'}`).join(' · ') : 'لا يوجد'}</p>
+          </div>
+        </div>
+
+        {(unit.transfusions ?? []).map((t: any) => <div key={t.id} className={`mt-3 rounded-lg border p-2 text-xs ${t.completed_at ? 'bg-slate-50' : 'bg-amber-50 border-amber-200'}`}>
+          <p className="font-semibold">نقل بدأه {t.started_by_name} · تدقيق {t.checker_name} · {dt(t.started_at)}</p>
+          <p>{t.completed_at ? <>انتهى {dt(t.completed_at)} — {OUTCOME_AR[t.outcome] ?? t.outcome} · {t.volume_transfused_ml ?? 0} مل</> : 'جارٍ الآن — لم يُغلق بعد'}</p>
+          {t.notes && <p className="text-slate-500">ملاحظات: {t.notes}</p>}
+          {t.reaction && <p className="text-rose-700">تفاعل: {REACTION_AR[t.reaction.reaction_type] ?? t.reaction.reaction_type} · {SEVERITY_AR[t.reaction.severity] ?? t.reaction.severity} — {t.reaction.description}</p>}
+        </div>)}
+
+        {unit.status === 'issued' && !activeTx && has(m, 'bloodbank.transfuse') && latestMatch && <div className="mt-3 border-t pt-2">
+          <p className="text-sm font-semibold mb-1">بدء النقل — يتطلب مدققًا ثانيًا وحضور الموافقة</p>
+          <div className="flex flex-wrap gap-1 items-end">
+            <select className="input !w-52 text-xs" value={tx.secondCheckerId} onChange={(e) => setTx({ ...tx, secondCheckerId: e.target.value })}>
+              <option value="">المدقق الثاني</option>
+              {checkers.filter((c) => c.id !== m.user.id).map((c) => <option key={c.id} value={c.id}>{c.full_name_ar} · {c.role_name}</option>)}
+            </select>
+            {[['preHeartRate', 'نبض'], ['preSystolicBp', 'انقباضي'], ['preSpo2', 'SpO₂'], ['preTemperatureC', 'حرارة']].map(([k, label]) => (
+              <input key={k} className="input !w-24 text-xs" placeholder={label} value={tx[k]} onChange={(e) => setTx({ ...tx, [k]: e.target.value })} />
+            ))}
+          </div>
+          <label className="flex items-center gap-2 text-xs mt-2"><input type="checkbox" checked={tx.consent} onChange={(e) => setTx({ ...tx, consent: e.target.checked })} />تم التحقق من هوية المريض والموافقة المستنيرة ووحدة الدم المطابقة</label>
+          <button className="btn-primary text-xs mt-2" disabled={!tx.secondCheckerId || !tx.consent}
+            onClick={() => act(() => api(`/api/bloodbank/units/${unit.id}/transfuse`, { method: 'POST', body: JSON.stringify({
+              requestId: latestMatch.request_id,
+              secondCheckerId: tx.secondCheckerId,
+              consentConfirmed: true,
+              ...Object.fromEntries(Object.entries(tx).filter(([k, v]) => k.startsWith('pre') && v !== '').map(([k, v]) => [k, Number(v)])),
+            }) }), 'بدأ النقل')}>بدء النقل</button>
+        </div>}
+
+        {activeTx && has(m, 'bloodbank.transfuse') && <div className="mt-3 border-t pt-2">
+          <p className="text-sm font-semibold mb-1">إغلاق النقل</p>
+          <div className="flex flex-wrap gap-1 items-end">
+            <select className="input !w-44 text-xs" value={closing.outcome} onChange={(e) => setClosing({ ...closing, outcome: e.target.value })}>
+              {Object.entries(OUTCOME_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <input className="input !w-28 text-xs" type="number" placeholder="الحجم المنقول (مل)" value={closing.volumeTransfusedMl} onChange={(e) => setClosing({ ...closing, volumeTransfusedMl: e.target.value })} />
+            <input className="input !w-56 text-xs" placeholder="ملاحظات (اختياري)" value={closing.notes} onChange={(e) => setClosing({ ...closing, notes: e.target.value })} />
+            <button className="btn-primary text-xs" disabled={closing.volumeTransfusedMl === '' || Number(closing.volumeTransfusedMl) > 600}
+              onClick={() => act(() => api(`/api/bloodbank/transfusions/${activeTx.id}/complete`, { method: 'POST', body: JSON.stringify({ outcome: closing.outcome, volumeTransfusedMl: Number(closing.volumeTransfusedMl), notes: closing.notes || undefined }) }), 'أُغلق سجل النقل')}>حفظ النتيجة</button>
+          </div>
+        </div>}
+
+        {unit.status === 'transfused' && !anyReaction && has(m, 'bloodbank.reaction') && <div className="mt-3 border-t pt-2">
+          <p className="text-sm font-semibold mb-1">الإبلاغ عن تفاعل نقل</p>
+          <div className="flex flex-wrap gap-1 items-end">
+            <select className="input !w-32 text-xs" value={reaction.reactionType} onChange={(e) => setReaction({ ...reaction, reactionType: e.target.value })}>
+              {Object.entries(REACTION_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <select className="input !w-32 text-xs" value={reaction.severity} onChange={(e) => setReaction({ ...reaction, severity: e.target.value })}>
+              {Object.entries(SEVERITY_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <input className="input !w-60 text-xs" placeholder="وصف التفاعل (١٠ أحرف على الأقل)" value={reaction.description} onChange={(e) => setReaction({ ...reaction, description: e.target.value })} />
+            <input className="input !w-56 text-xs" placeholder="الإجراء المتخذ" value={reaction.actionTaken} onChange={(e) => setReaction({ ...reaction, actionTaken: e.target.value })} />
+            <button className="btn-danger text-xs" disabled={reaction.description.trim().length < 10 || reaction.actionTaken.trim().length < 5}
+              onClick={() => act(() => api(`/api/bloodbank/transfusions/${doneTx?.id ?? unit.transfusions[0]?.id}/reactions`, { method: 'POST', body: JSON.stringify(reaction) }), 'سُجل التفاعل وحُجزت الوحدة')}>تسجيل التفاعل</button>
+          </div>
+          {reaction.severity !== 'mild' && !(unit.transfusions ?? []).some((t: any) => t.completed_at) && <p className="text-[11px] text-amber-700 mt-1">التفاعل المتوسط أو الشديد يتطلب إغلاق النقل أولًا مع اختيار «أُوقف لتفاعل».</p>}
+          <p className="text-[11px] text-slate-500 mt-1">الوحدة المتورطة تُستبعد تلقائيًا ولا تعود للمخزون.</p>
+        </div>}
+
+        {(unit.status === 'available' || unit.status === 'reserved') && has(m, 'bloodbank.stock') && <div className="mt-3 border-t pt-2">
+          <p className="text-sm font-semibold mb-1">استبعاد الوحدة</p>
+          <div className="flex flex-wrap gap-1 items-end">
+            <input className="input !w-72 text-xs" placeholder="سبب الاستبعاد (٥ أحرف على الأقل)" value={discard} onChange={(e) => setDiscard(e.target.value)} />
+            <button className="btn-danger text-xs" disabled={discard.trim().length < 5}
+              onClick={() => act(() => api(`/api/bloodbank/units/${unit.id}/discard`, { method: 'POST', body: JSON.stringify({ reason: discard }) }), 'استُبعدت الوحدة')}>استبعاد</button>
+          </div>
+        </div>}
+      </Card>}
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        {has(m, 'bloodbank.stock') && <Card title="تسجيل تبرع جديد">
+          <div className="grid sm:grid-cols-3 gap-2">
+            <div><label className="label">فصيلة الدم</label>
+              <select className="input" value={donor.bloodType} onChange={(e) => setDonor({ ...donor, bloodType: e.target.value })}>
+                {BLOOD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select></div>
+            <div><label className="label">الهيموغلوبين</label>
+              <input className="input" type="number" step="0.1" min="5" max="25" value={donor.hemoglobin} onChange={(e) => setDonor({ ...donor, hemoglobin: e.target.value })} /></div>
+            <div><label className="label">سبب الاستبعاد (إن وجد)</label>
+              <input className="input" value={donor.deferralReason} onChange={(e) => setDonor({ ...donor, deferralReason: e.target.value })} /></div>
+          </div>
+          <div className="flex flex-wrap gap-3 mt-2 text-xs">
+            {[['hbv', 'HBV سلبي'], ['hcv', 'HCV سلبي'], ['hiv', 'HIV سلبي'], ['syphilis', 'الزهري سلبي']].map(([k, label]) => (
+              <label key={k} className="flex items-center gap-1"><input type="checkbox" checked={donor[k]} onChange={(e) => setDonor({ ...donor, [k]: e.target.checked })} />{label}</label>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-3 mt-2 text-xs">
+            {Object.entries(COMPONENT_AR).map(([k, label]) => (
+              <label key={k} className="flex items-center gap-1"><input type="checkbox" checked={donor.components.includes(k)}
+                onChange={(e) => setDonor({ ...donor, components: e.target.checked ? [...donor.components, k] : donor.components.filter((x: string) => x !== k) })} />{label}</label>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-500 mt-2">صلاحية افتراضية: كريات ٤٢ يومًا، بلازما ٣٦٥، صفائح ٥، راسب قري ٣٦٥. أي فحص إيجابي ⇒ تبرع غير مؤهل والوحدات تُستبعد تلقائيًا.</p>
+          <button className="btn-primary text-xs mt-2" disabled={donor.components.length === 0}
+            onClick={() => act(() => api('/api/bloodbank/donors', { method: 'POST', body: JSON.stringify({
+              bloodType: donor.bloodType,
+              hemoglobin: donor.hemoglobin === '' ? undefined : Number(donor.hemoglobin),
+              hbvNegative: donor.hbv, hcvNegative: donor.hcv, hivNegative: donor.hiv, syphilisNegative: donor.syphilis,
+              deferralReason: donor.deferralReason || undefined,
+              units: donor.components.map((c: string) => ({ component: c })),
+            }) }), hasScreeningPass ? 'سُجل التبرع وأُضيفت الوحدات' : 'سُجل تبرع غير مؤهل واستُبعدت وحداته')}>
+            تسجيل التبرع
+          </button>
+        </Card>}
+
+        {has(m, 'bloodbank.request') && <Card title="طلب دم جديد">
+          <div className="grid sm:grid-cols-2 gap-2">
+            <div><label className="label">المريض</label>
+              <select className="input" value={req.patientId} onChange={(e) => pickPatient(e.target.value)}>
+                <option value="">—</option>
+                {patients.map((p) => <option key={p.id} value={p.id}>{p.mrn} · {p.fullNameAr} · {p.bloodType ?? 'بلا فصيلة'}</option>)}
+              </select></div>
+            <div><label className="label">الزيارة المفتوحة</label>
+              <select className="input" value={req.encounterId} onChange={(e) => setReq({ ...req, encounterId: e.target.value })}>
+                <option value="">—</option>
+                {encounters.map((e: any) => <option key={e.id} value={e.id}>{e.encounter_no} · {e.department_name ?? ''} · {dt(e.started_at)}</option>)}
+              </select></div>
+            <div><label className="label">المكوّن</label>
+              <select className="input" value={req.component} onChange={(e) => setReq({ ...req, component: e.target.value })}>
+                {Object.entries(COMPONENT_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select></div>
+            <div><label className="label">عدد الوحدات</label>
+              <input className="input" type="number" min="1" max="20" value={req.unitsRequested} onChange={(e) => setReq({ ...req, unitsRequested: Number(e.target.value) })} /></div>
+            <div><label className="label">الأولوية</label>
+              <select className="input" value={req.urgency} onChange={(e) => setReq({ ...req, urgency: e.target.value })}>
+                {Object.entries(URGENCY_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select></div>
+            <div><label className="label">Hb (اختياري)</label>
+              <input className="input" type="number" step="0.1" min="1" max="25" value={req.hbValue} onChange={(e) => setReq({ ...req, hbValue: e.target.value })} /></div>
+          </div>
+          <input className="input mt-2" placeholder="الاستطباب السريري (٥ أحرف على الأقل)" value={req.indication} onChange={(e) => setReq({ ...req, indication: e.target.value })} />
+          {selectedPatient && !selectedPatient.bloodType && <p className="text-[11px] text-rose-700 mt-1">فصيلة دم المريض غير مسجلة — سجّلها من ملف المريض أولًا.</p>}
+          {req.patientId && encounters.length === 0 && <p className="text-[11px] text-amber-700 mt-1">لا توجد زيارة مفتوحة لهذا المريض؛ ابدأ زيارة من العيادة أو الطوارئ أولًا.</p>}
+          <button className="btn-primary text-xs mt-2" disabled={!req.encounterId || !selectedPatient?.bloodType || req.indication.trim().length < 5}
+            onClick={() => act(async () => {
+              await api('/api/bloodbank/requests', { method: 'POST', body: JSON.stringify({
+                patientId: req.patientId, encounterId: req.encounterId, component: req.component,
+                unitsRequested: Number(req.unitsRequested), urgency: req.urgency, indication: req.indication,
+                hbValue: req.hbValue === '' ? undefined : Number(req.hbValue),
+              }) });
+              setReq({ ...req, patientId: '', encounterId: '', indication: '', hbValue: '' }); setEncounters([]);
+            }, 'أُنشئ طلب الدم')}>إرسال الطلب</button>
+        </Card>}
+      </div>
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------- Portal ----
 function Portal() {
   const [d, setD] = useState<any>(null); const [err, setErr] = useState<string | null>(null);
@@ -1652,6 +2019,7 @@ const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'nursing', label: 'التمريض', perms: ['nursing.read'] },
   { key: 'surgery', label: 'العمليات والتخدير', perms: ['surgery.read'] },
   { key: 'icu', label: 'العناية المركزة', perms: ['icu.read'] },
+  { key: 'bloodbank', label: 'بنك الدم', perms: ['bloodbank.read'] },
   { key: 'pharmacy', label: 'الصيدلية', perms: ['pharmacy.prescription.read'] },
   { key: 'billing', label: 'الفوترة', perms: ['billing.invoice.read'] },
   { key: 'reports', label: 'التقارير', perms: ['report.read'] },
@@ -1717,6 +2085,7 @@ export default function App() {
         {page === 'nursing' && <Nursing m={auth} />}
         {page === 'surgery' && <Surgery m={auth} />}
         {page === 'icu' && <Icu m={auth} />}
+        {page === 'bloodbank' && <BloodBank m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
         {page === 'radiology' && <Radiology m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}

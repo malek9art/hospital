@@ -61,6 +61,13 @@ const PERMISSIONS: [string, string, string][] = [
   ['icu.ventilator', 'icu', 'إدارة إعدادات التنفس الصناعي'],
   ['icu.manage', 'icu', 'فتح إقامة عناية مركزة'],
   ['icu.discharge', 'icu', 'إغلاق إقامة العناية المركزة'],
+  ['bloodbank.read', 'bloodbank', 'عرض مخزون الدم والطلبات وتتبع الوحدات'],
+  ['bloodbank.request', 'bloodbank', 'طلب وحدات دم للمريض'],
+  ['bloodbank.crossmatch', 'bloodbank', 'إجراء فحص التوافق وحجز الوحدات'],
+  ['bloodbank.issue', 'bloodbank', 'صرف وحدات الدم للجناح'],
+  ['bloodbank.transfuse', 'bloodbank', 'بدء النقل والتحقق الثاني وإغلاقه'],
+  ['bloodbank.reaction', 'bloodbank', 'الإبلاغ عن تفاعلات نقل الدم'],
+  ['bloodbank.stock', 'bloodbank', 'تسجيل المتبرعين والوحدات واستبعادها'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -81,11 +88,12 @@ const ROLE_PERMS: Record<string, string[]> = {
   surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read'],
   anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read'],
   or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read'],
-  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read'],
-  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness'],
-  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule'],
-  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule'],
-  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness'],
+  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction'],
+  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction'],
+  blood_bank_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'bloodbank.read', 'bloodbank.crossmatch', 'bloodbank.issue', 'bloodbank.stock', 'bloodbank.reaction', 'report.read'],
+  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction'],
+  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request'],
+  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction'],
   receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record'],
   records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export'],
   lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read'],
@@ -108,6 +116,7 @@ const ROLES: [string, string, string][] = [
   ['or_nurse', 'تمريض عمليات', 'Operating-room nurse'],
   ['intensivist', 'طبيب عناية مركزة', 'Intensivist'],
   ['icu_nurse', 'تمريض عناية مركزة', 'ICU nurse'],
+  ['blood_bank_tech', 'فني بنك دم', 'Blood bank technologist'],
   ['receptionist', 'استقبال', 'Receptionist'],
   ['records_officer', 'السجلات الطبية', 'Medical records'],
   ['lab_tech', 'فني مختبر', 'Lab technician'],
@@ -184,6 +193,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     surgeon: await hashPassword('Surgeon#Demo2026'),
     anesthesia: await hashPassword('Anesthesia#Demo2026'),
     icu: await hashPassword('ICU#Demo2026'),
+    blood: await hashPassword('Blood#Demo2026'),
     reception: await hashPassword('Reception#Demo2026'),
     records: await hashPassword('Records#Demo2026'),
     lab: await hashPassword('Lab#Demo2026'),
@@ -206,6 +216,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['ornurse@demo.hms', 'سارة الدوسري', 'Sara Aldosari', 'ممرضة غرفة عمليات', 'or_nurse', password.nurse, 'OR'],
     ['intensivist@demo.hms', 'د. فيصل الحربي', 'Dr. Faisal Alharbi', 'استشاري عناية مركزة', 'intensivist', password.icu, 'INP'],
     ['icunurse@demo.hms', 'أمل الجهني', 'Amal Aljohani', 'ممرضة عناية مركزة', 'icu_nurse', password.icu, 'INP'],
+    ['bloodbank@demo.hms', 'نورة الحربي', 'Noura Alharbi', 'فنية بنك دم', 'blood_bank_tech', password.blood, 'LAB'],
     ['reception@demo.hms', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', 'receptionist', password.reception, 'ADM'],
     ['records@demo.hms', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', 'records_officer', password.records, 'ADM'],
     ['lab@demo.hms', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', 'lab_tech', password.lab, 'LAB'],
@@ -721,13 +732,90 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     }
   }
 
-  // Seeded documents use fixed numbers; move sequences past them so the first
-  // live document cannot collide with demo data.
-  for (const name of ['appointment', 'mrn', 'encounter', 'lab_order', 'prescription', 'invoice', 'claim', 'admission', 'surgery', 'icu_stay']) {
+  // -------------------------------------------------------------- Blood bank --
+  // Synthetic donations covering compatible and deliberately incompatible
+  // units, plus one open request for the ICU patient (A-) so the cross-match,
+  // issue and transfusion chain can be walked end to end.
+  {
+    const tech = userIds['blood_bank_tech:bloodbank@demo.hms'];
+    const donorPlan: { no: string; type: string; units: [string, number][] }[] = [
+      { no: 'DNR-000001', type: 'O-', units: [['rbc', 2]] },
+      { no: 'DNR-000002', type: 'A-', units: [['rbc', 2], ['ffp', 1]] },
+      { no: 'DNR-000003', type: 'A+', units: [['rbc', 2]] },
+      { no: 'DNR-000004', type: 'O+', units: [['rbc', 2]] },
+      { no: 'DNR-000005', type: 'B+', units: [['rbc', 1], ['platelets', 1]] },
+      { no: 'DNR-000006', type: 'AB+', units: [['ffp', 2]] },
+      { no: 'DNR-000007', type: 'A-', units: [['platelets', 1]] },
+    ];
+    const componentDays: Record<string, number> = { rbc: 42, ffp: 365, platelets: 5, cryo: 365 };
+    let unitSeq = 1;
+    for (const d of donorPlan) {
+      const donorId = crypto.randomUUID();
+      await db.query(
+        `INSERT INTO blood_donors (id, facility_id, donor_no, blood_type, hemoglobin, created_by, donated_at)
+         VALUES ($1,$2,$3,$4,14.2,$5, now() - interval '3 days')`,
+        [donorId, facilityId, d.no, d.type, tech],
+      );
+      for (const [component, count] of d.units) {
+        for (let i = 0; i < count; i++) {
+          await db.query(
+            `INSERT INTO blood_units (id, facility_id, unit_no, donor_id, component, blood_type, volume_ml,
+               collected_at, expires_at, status)
+             VALUES ($1,$2,$3,$4,$5,$6,$7, now() - interval '3 days',
+                     now() - interval '3 days' + make_interval(days => $8::int), 'available')`,
+            [crypto.randomUUID(), facilityId, `BGU-${String(unitSeq++).padStart(6, '0')}`, donorId,
+              component, d.type, component === 'rbc' ? 450 : 250, componentDays[component]],
+          );
+        }
+      }
+    }
+
+    const icu = await db.query<{ patient_id: string; encounter_id: string }>(
+      `SELECT patient_id, encounter_id FROM admissions WHERE admission_no = 'ADM-000002'`,
+    );
+    if (icu.rows[0]) {
+      await db.query(
+        `INSERT INTO blood_requests (id, facility_id, request_no, patient_id, encounter_id, component,
+           units_requested, urgency, indication, hb_value, requested_by, requested_at)
+         VALUES ($1,$2,'BLR-000001',$3,$4,'rbc',2,'urgent',
+                 'هبوط الهيموغلوبين إلى 7.1 مع أعراض فقر دم وقصور قلب', 7.1, $5, now() - interval '2 hours')`,
+        [crypto.randomUUID(), facilityId, icu.rows[0].patient_id, icu.rows[0].encounter_id,
+          userIds['intensivist:intensivist@demo.hms']],
+      );
+    }
+  }
+
+  // Seeded documents use fixed numbers, so move each sequence past the highest
+  // demo number. The floor is derived from the seeded rows rather than a magic
+  // constant: a fixed floor broke silently once a module seeded more records
+  // (13 blood units) than the constant assumed, and the first live record hit a
+  // UNIQUE violation. Table/column names are constants, never user input.
+  const sequenceSources: [string, string, string, string][] = [
+    ['appointment', 'appointments', 'appointment_no', 'APT'],
+    ['mrn', 'patients', 'mrn', 'MRN'],
+    ['er_mrn', 'patients', 'mrn', 'ER'],
+    ['encounter', 'encounters', 'encounter_no', 'ENC'],
+    ['lab_order', 'lab_orders', 'order_no', 'LAB'],
+    ['prescription', 'prescriptions', 'prescription_no', 'RX'],
+    ['invoice', 'invoices', 'invoice_no', 'INV'],
+    ['claim', 'insurance_claims', 'claim_no', 'CLM'],
+    ['admission', 'admissions', 'admission_no', 'ADM'],
+    ['surgery', 'surgical_cases', 'case_no', 'SUR'],
+    ['icu_stay', 'icu_stays', 'stay_no', 'ICU'],
+    ['imaging', 'imaging_orders', 'order_no', 'IMG'],
+    ['blood_donor', 'blood_donors', 'donor_no', 'DNR'],
+    ['blood_unit', 'blood_units', 'unit_no', 'BGU'],
+    ['blood_request', 'blood_requests', 'request_no', 'BLR'],
+  ];
+  for (const [name, table, column, prefix] of sequenceSources) {
+    const max = await db.query<{ next: number }>(
+      `SELECT COALESCE(max(NULLIF(regexp_replace(${column}, '\\D', '', 'g'), '')::int), 0) + 1 AS next
+         FROM ${table} WHERE ${column} LIKE '${prefix}-%'`,
+    );
     await db.query(
-      `INSERT INTO number_sequences (facility_id, name, next_value) VALUES ($1,$2,10)
-       ON CONFLICT (facility_id, name) DO UPDATE SET next_value = GREATEST(number_sequences.next_value, 10)`,
-      [facilityId, name],
+      `INSERT INTO number_sequences (facility_id, name, next_value) VALUES ($1,$2,$3)
+       ON CONFLICT (facility_id, name) DO UPDATE SET next_value = GREATEST(number_sequences.next_value, $3)`,
+      [facilityId, name, Math.max(1, Number(max.rows[0]?.next ?? 1))],
     );
   }
 

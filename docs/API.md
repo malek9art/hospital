@@ -52,6 +52,7 @@
 | Method | Path | الحالات |
 |---|---|---|
 | POST | `/api/encounters` | زيارة مفتوحة واحدة/مريض → 409 إن وُجدت |
+| GET | `/api/encounters?patientId=&status=open\|closed\|all` | `clinical.encounter.read` + علاقة علاجية/break-glass — زيارات مريض واحد فقط (تُستخدم لربط طلب الدم بزيارة مفتوحة) |
 | GET | `/api/encounters/:id` | يضم الحيوية/الملاحظات/التشخيصات/الطلبات/الوصفات/الفواتير |
 | POST | `/api/encounters/:id/vitals` \| `/notes` \| `/diagnoses` | |
 | POST | `/api/encounters/:id/lab-orders` | يُنشئ بنود + فاتورة لكل تحليل (ذريًا) |
@@ -156,6 +157,29 @@
 
 التقرير المعتمد غير قابل للتعديل أو الحذف على مستوى قاعدة البيانات (trigger)؛ التصحيح يكون بإصدار جديد مرتبط بالأصل عبر `amended_from`.
 **حدود معلنة:** لا يوجد تكامل DICOM/PACS ولا أرشفة صور — النظام يغطي الطلب والتنفيذ والتقرير والرسوم فقط.
+
+## بنك الدم
+
+| Method | Path | ملاحظات |
+|---|---|---|
+| GET | `/api/bloodbank/stock` | `bloodbank.read` — شبكة المكوّن×الفصيلة، الوحدات المتاحة/المحجوزة/المصروفة مع الصلاحية والأيام المتبقية، وإجماليات (متاح/منتهي/محجوز/مصروف/نُقل اليوم) |
+| GET | `/api/bloodbank/second-checkers` | `bloodbank.transfuse` — الموظفون الحاملون لصلاحية النقل في المنشأة (لتغذية اختيار المدقق الثاني فقط) |
+| POST | `/api/bloodbank/donors` | `bloodbank.stock` — `{bloodType, hemoglobin?, hbvNegative, hcvNegative, hivNegative, syphilisNegative, units:[{component, volumeMl?, expiresInDays?}]}`؛ أي فحص إيجابي ⇒ تبرع غير مؤهل ووحداته `discarded` تلقائيًا. صلاحية افتراضية: rbc ٤٢ · ffp ٣٦٥ · platelets ٥ · cryo ٣٦٥ يومًا |
+| POST | `/api/bloodbank/requests` | `bloodbank.request` — `{patientId, encounterId, component, unitsRequested, urgency, indication, hbValue?, plateletsValue?}`؛ يتطلب فصيلة دم مسجلة وزيارة مفتوحة وطلبًا مفتوحًا واحدًا لكل مريض |
+| GET | `/api/bloodbank/requests?status=active\|all\|<status>` | قائمة الطلبات مرتبة بالخطورة مع عدد الوحدات المنقولة والمطابقات |
+| GET | `/api/bloodbank/requests/:id/compatible-units` | `bloodbank.crossmatch` — كل وحدات المكوّن المتاحة مع حكم التوافق وسببه |
+| GET | `/api/bloodbank/requests/:id/reserved-units` | `bloodbank.issue` — الوحدات المحجوزة لهذا الطلب ونتيجة فحصها |
+| POST | `/api/bloodbank/requests/:id/crossmatch` | `bloodbank.crossmatch` — `{unitId, method:'gel'\|'tube'\|'electronic', forceIncompatible?, note?}`؛ الوحدة غير المتوافقة تُرفض إلا بتجاوز موثق بملاحظة، والتجاوز **لا يسمح بالصرف** |
+| POST | `/api/bloodbank/requests/:id/issue` | `bloodbank.issue` — يتطلب حجزًا لهذا المريض وفحص توافق ناجحًا ووحدة غير منتهية |
+| POST | `/api/bloodbank/units/:id/transfuse` | `bloodbank.transfuse` — `{requestId, secondCheckerId, consentConfirmed:true, preHeartRate?, preSystolicBp?, preTemperatureC?, preSpo2?}`؛ المدقق الثاني يجب أن يختلف عن المنفّذ ويحمل الصلاحية |
+| POST | `/api/bloodbank/transfusions/:id/complete` | `{outcome:'completed'\|'stopped_reaction'\|'stopped_other', volumeTransfusedMl, notes?}`؛ يكمل الطلب عند اكتمال عدد الوحدات |
+| POST | `/api/bloodbank/transfusions/:id/reactions` | `bloodbank.reaction` — تفاعل واحد لكل نقل؛ المتوسط/الشديد يتطلب إغلاق النقل أولًا؛ الوحدة تُستبعد تلقائيًا |
+| GET | `/api/bloodbank/units/:id` | تفاصيل الوحدة: المتبرع والفحوص، فحوص التوافق، سجلات النقل والتفاعل |
+| POST | `/api/bloodbank/units/:id/discard` | `bloodbank.stock` — سبب ≥ ٥ أحرف؛ الوحدات المصروفة/المنقولة لا تُستبعد |
+
+**قواعد التوافق (خادم):** كريات حمراء O→O · A→A,O · B→B,O · AB→الكل؛ البلازما والراسب القري معكوسة (O→الكل · A→A,AB · B→B,AB · AB→AB)؛ Rh سالب لا يستقبل موجبًا في الكريات والصفائح. **الحدود:** لا فحص أجسام مضادة أو معايرة عيار، لا مطابقة إلكترونية تتجاوز قرارًا سريريًا، لا ترميز ISBT 128، لا تكامل مع مورّد أو بنك دم وطني.
+
+**فصل المهام:** طلب الدم (`bloodbank.request`) ≠ فحص التوافق والصرف (`bloodbank.crossmatch`/`bloodbank.issue`، تقني بنك الدم) ≠ النقل (`bloodbank.transfuse`، تمريض) مع مدقق ثانٍ مختلف. كل خطوة تُسجَّل في التدقيق، وسجلات المطابقة والنقل والتفاعل ملحقة (لا تُعدّل).
 
 ## الإدارة والتدقيق
 

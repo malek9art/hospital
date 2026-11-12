@@ -24,6 +24,7 @@ import { radiologyRoutes } from './modules/radiology/routes';
 import { nursingRoutes } from './modules/nursing/routes';
 import { surgeryRoutes } from './modules/surgery/routes';
 import { icuRoutes } from './modules/icu/routes';
+import { bloodbankRoutes } from './modules/bloodbank/routes';
 import { dashboardRoutes } from './modules/dashboard/routes';
 import { adminRoutes } from './modules/admin/routes';
 import { portalRoutes } from './modules/portal/routes';
@@ -39,6 +40,8 @@ declare module 'fastify' {
 export interface BuildOptions {
   logger?: boolean | object;
   serveWeb?: boolean;
+  /** Override for the built SPA directory (tests use a throwaway fixture). */
+  webDir?: string;
 }
 
 export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInstance> {
@@ -211,6 +214,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(nursingRoutes);
   await app.register(surgeryRoutes);
   await app.register(icuRoutes);
+  await app.register(bloodbankRoutes);
   await app.register(reportRoutes);
   await app.register(dashboardRoutes);
   await app.register(adminRoutes);
@@ -219,17 +223,22 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(metaRoutes);
 
   // ---- Static SPA ---------------------------------------------------------------
-  const webDir = cfg.WEB_DIR;
+  const webDir = opts.webDir ?? cfg.WEB_DIR;
   if (opts.serveWeb !== false && fs.existsSync(path.join(webDir, 'index.html'))) {
     const fastifyStatic = (await import('@fastify/static')).default;
     await app.register(fastifyStatic, {
       root: webDir,
       prefix: '/',
       wildcard: false,
+      // @fastify/static v10 passes the Fastify reply here (older versions passed
+      // the raw ServerResponse). Accept either so assets never 500 on a real
+      // server: this exact mismatch broke every JS/CSS request with
+      // "res.setHeader is not a function" while API-only tests stayed green.
       setHeaders: (res: any, filePath: string) => {
-        if (filePath.includes('/assets/')) {
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        }
+        if (!filePath.includes('/assets/')) return;
+        const cache = 'public, max-age=31536000, immutable';
+        if (typeof res.header === 'function') res.header('Cache-Control', cache);
+        else if (typeof res.setHeader === 'function') res.setHeader('Cache-Control', cache);
       },
     });
     app.setNotFoundHandler((req, reply) => {
