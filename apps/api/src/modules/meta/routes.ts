@@ -15,7 +15,7 @@ export const MODULE_STATUS = [
   { key: 'emergency', ar: 'الطوارئ والفرز', status: 'implemented', note: 'لوحة فرز ESI 1-5، وصول مجهول الهوية مع مطابقة لاحقة، إعادة فرز مسببة، تحويل للتنويم أو خروج/تحويل بملخص' },
   { key: 'nursing', ar: 'التمريض', status: 'implemented', note: 'لوحة أسرّة، سجل إعطاء أدوية (MAR) بحقوق الإعطاء الخمسة وشاهد للأدوية عالية الخطورة، خطط رعاية بمهام مجدولة، وتسليم مناوبة SBAR' },
   { key: 'radiology', ar: 'الأشعة والتقارير', status: 'partial', note: 'طلب وتنفيذ وتقرير معتمد ونتائج حرجة — لا يوجد تكامل DICOM/PACS فعلي بعد' },
-  { key: 'surgery', ar: 'العمليات والتخدير', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
+  { key: 'surgery', ar: 'العمليات والتخدير', status: 'implemented', note: 'جدولة غرف العمليات بمنع التعارض، قوائم التحقق العالمية (WHO) قبل التخدير وقبل الشق وبعد العملية، سجل تخدير ملحق، عدّ الأدوات والإبر، وإفاقة ألدريتي مع رسوم العملية والتخدير' },
   { key: 'icu', ar: 'العناية المركزة', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
   { key: 'bloodbank', ar: 'بنك الدم', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
   { key: 'nutrition', ar: 'التغذية الطبية', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
@@ -47,7 +47,7 @@ export async function metaRoutes(app: FastifyInstance) {
         db.query(
           `SELECT DISTINCT u.id, u.full_name_ar, ur.department_id, ur.role_id
              FROM users u JOIN user_roles ur ON ur.user_id = u.id
-            WHERE ur.facility_id = $1 AND u.is_active = true AND ur.role_id IN ('physician','department_manager')
+            WHERE ur.facility_id = $1 AND u.is_active = true AND ur.role_id IN ('physician','department_manager','surgeon','anesthesiologist')
             ORDER BY u.full_name_ar`,
           [auth.activeFacilityId],
         ),

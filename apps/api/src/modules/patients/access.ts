@@ -28,7 +28,9 @@ interface PatientRow {
   identity_status: string;
 }
 
-const RELATIONSHIP_ROLES = new Set(['physician', 'nurse', 'department_manager']);
+// Clinical roles that must prove a care relationship before opening a chart.
+// Theatre staff count as related through their assignment on a live surgical case.
+const RELATIONSHIP_ROLES = new Set(['physician', 'nurse', 'department_manager', 'surgeon', 'anesthesiologist', 'or_nurse']);
 
 export async function loadPatientOr404(q: Queryable, patientId: string): Promise<PatientRow> {
   const res = await q.query<PatientRow>('SELECT * FROM patients WHERE id = $1', [patientId]);
@@ -76,6 +78,11 @@ export async function authorizeChartAccess(
            UNION ALL
            SELECT 1 FROM appointments a
             WHERE a.patient_id = $1 AND a.facility_id = $2 AND a.doctor_id = $3
+           UNION ALL
+           SELECT 1 FROM surgical_cases sc
+            WHERE sc.patient_id = $1 AND sc.facility_id = $2
+              AND (sc.surgeon_id = $3 OR sc.anesthesiologist_id = $3)
+              AND sc.status <> 'cancelled'
          ) AS exists`,
         [
           patient.id,

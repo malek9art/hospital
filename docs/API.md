@@ -89,6 +89,23 @@
 - CSV يبدأ بـ BOM (Excel عربي) وتُحايد الخلايا التي تبدأ بـ `= + - @` لمنع حقن الصيغ.
 - تقرير الإيرادات يتطلب `report.finance` (فصل الأدوار السريرية عن المالية).
 
+## العمليات والتخدير
+
+| Method | Path | ملاحظات |
+|---|---|---|
+| GET | `/api/surgery/theatres` | غرف العمليات المفعّلة |
+| GET | `/api/surgery/board` | جدول العمليات النشطة + إحصاءات (قيد العملية/الإفاقة/مجدولة/مكتملة اليوم) + تعريف بنود قوائم التحقق |
+| POST | `/api/surgery/cases` | جدولة `{patientId, encounterId, theatreId, procedureName, scheduledAt, estimatedMinutes, surgeonId?, anesthesiologistId?, priority, anesthesiaType}` — تُرفض عند تقاطع الأوقات |
+| GET | `/api/surgery/cases/:id` | الملف الكامل: القوائم، قياسات التخدير، الإفاقة |
+| POST | `/api/surgery/cases/:id/checklists` | `{phase:'sign_in'|'time_out', items}` — كل البنود الإلزامية مطلوبة، والمرة الواحدة فقط |
+| POST | `/api/surgery/cases/:id/start` | يتطلب قائمتي التحقق وزيارة مفتوحة |
+| POST | `/api/surgery/cases/:id/anesthesia` | `anesthesia.perform` فقط؛ سجل ملحق |
+| POST | `/api/surgery/cases/:id/close` | `{signOut, counts:{instruments,sponges,needles:{expected,actual}}, discrepancyNote?}` — تُحتسب رسوم العملية والتخدير |
+| POST | `/api/surgery/cases/:id/recovery` | ألدريتي ≥ ٨، وجهة النقل؛ تُكمل العملية |
+| POST | `/api/surgery/cases/:id/cancel` | مسموح قبل الشق فقط وبسبب موثق |
+
+**حدود:** لا تكامل مع أجهزة التخدير أو PACS أو نظام تعقيم؛ الجدولة والسجلات والرسوم فقط.
+
 ## التمريض
 
 | Method | Path | ملاحظات |

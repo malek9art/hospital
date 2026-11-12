@@ -47,7 +47,7 @@ erDiagram
   USERS ||--o{ BREAK_GLASS_GRANTS : emergency
 ```
 
-## الجداول (57)
+## الجداول (62)
 
 | المجموعة | الجداول |
 |---|---|
@@ -61,6 +61,7 @@ erDiagram
 | التنويم | `wards`, `rooms`, `beds`, `admissions`, `bed_transfers` |
 | التمريض | `medication_administrations`, `care_plans`, `care_plan_tasks`, `shift_handovers` |
 | الأشعة | `imaging_orders`, `imaging_reports` |
+| العمليات والتخدير | `operating_theatres`, `surgical_cases`, `surgical_checklists`, `anesthesia_records`, `pacu_records` |
 | عرض للمريض | `portal_clinicians` (VIEW) |
 
 ## قيود سلامة مهمة
@@ -78,6 +79,8 @@ erDiagram
 | `medication_administrations` ملحق فقط (trigger يرفض UPDATE/DELETE) + `mar_one_record_per_slot (prescription_item_id, scheduled_for)` | سجل إعطاء غير قابل للتحريف وجرعة واحدة لكل فترة |
 | `shift_handovers` يرفض UPDATE بعد الكتابة إلا لتسجيل الاستلام (`handover_guard`) | ثبات محتوى تسليم المناوبة |
 | `imaging_reports` يمنع تعديل التقرير بعد الاعتماد (`report_guard`) | ثبات التقرير المعتمد |
+| `surgical_checklists` / `anesthesia_records` / `pacu_records` ملحق فقط، و`surgical_cases` مغلقة بعد الإكمال أو الإلغاء | ثبات السجل الجراحي وقوائم السلامة |
+| `UNIQUE (theatre_id, scheduled_at)` + فحص تقاطع الأوقات في الـAPI | منع جدولة عمليتين في غرفة واحدة |
 | `hash_version` على `audit_log` | تطور خوارزمية السلسلة دون إبطال صامت |
 
 ## معايير الترميز المستخدمة

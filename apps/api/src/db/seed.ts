@@ -51,6 +51,11 @@ const PERMISSIONS: [string, string, string][] = [
   ['nursing.careplan.manage', 'nursing', 'إنشاء وإغلاق خطط الرعاية'],
   ['nursing.handover.write', 'nursing', 'كتابة تسليم المناوبة'],
   ['nursing.witness', 'nursing', 'الشهادة على إعطاء الأدوية عالية الخطورة'],
+  ['surgery.read', 'surgery', 'عرض جدول العمليات والملف الجراحي'],
+  ['surgery.schedule', 'surgery', 'جدولة العمليات وإلغاؤها'],
+  ['surgery.perform', 'surgery', 'بدء العملية وإغلاقها وتوقيع المسار الجراحي'],
+  ['surgery.checklist', 'surgery', 'إتمام قوائم التحقق الجراحية وتسجيل الإفاقة'],
+  ['anesthesia.perform', 'anesthesia', 'تسجيل قوائم ما قبل التخدير وقياسات التخدير'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -68,8 +73,11 @@ const ALL = PERMISSIONS.map((p) => p[0]);
 const ROLE_PERMS: Record<string, string[]> = {
   system_admin: ['admin.users.read', 'admin.users.manage', 'admin.roles.manage', 'admin.facility.manage', 'admin.sessions.manage', 'admin.settings.manage', 'audit.read', 'report.read'],
   hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read'],
-  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage'],
-  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read'],
+  surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read'],
+  anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read'],
+  or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read'],
+  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule'],
+  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule'],
   nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness'],
   receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record'],
   records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export'],
@@ -88,6 +96,9 @@ const ROLES: [string, string, string][] = [
   ['department_manager', 'مدير قسم', 'Department manager'],
   ['physician', 'طبيب', 'Physician'],
   ['nurse', 'تمريض', 'Nurse'],
+  ['surgeon', 'جراح', 'Surgeon'],
+  ['anesthesiologist', 'طبيب تخدير', 'Anesthesiologist'],
+  ['or_nurse', 'تمريض عمليات', 'Operating-room nurse'],
   ['receptionist', 'استقبال', 'Receptionist'],
   ['records_officer', 'السجلات الطبية', 'Medical records'],
   ['lab_tech', 'فني مختبر', 'Lab technician'],
@@ -125,12 +136,23 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['ADM', 'الإدارة', 'Administration', 'administration'],
     ['INP', 'التنويم', 'Inpatient', 'inpatient'],
     ['RAD', 'الأشعة', 'Radiology', 'radiology'],
+    ['OR', 'العمليات والتخدير', 'Operating theatres', 'surgery'],
   ];
   const deptIds: Record<string, string> = {};
   for (const [code, ar, en, type] of deptDefs) {
     const id = crypto.randomUUID();
     deptIds[code] = id;
     await db.query('INSERT INTO departments (id, facility_id, code, name_ar, name_en, dept_type) VALUES ($1,$2,$3,$4,$5,$6)', [id, facilityId, code, ar, en, type]);
+  }
+
+  const theatreIds: Record<string, string> = {};
+  for (const [code, ar, en] of [['OR-1', 'غرفة عمليات ١', 'Theatre 1'], ['OR-2', 'غرفة عمليات ٢', 'Theatre 2']] as const) {
+    const id = crypto.randomUUID();
+    theatreIds[code] = id;
+    await db.query(
+      `INSERT INTO operating_theatres (id, facility_id, dept_id, code, name_ar, name_en) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, facilityId, deptIds.OR, code, ar, en],
+    );
   }
 
   for (const [code, ar, en] of ROLES) {
@@ -150,6 +172,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     director: await hashPassword('Director#Demo2026'),
     doctor: await hashPassword('Doctor#Demo2026'),
     nurse: await hashPassword('Nurse#Demo2026'),
+    surgeon: await hashPassword('Surgeon#Demo2026'),
+    anesthesia: await hashPassword('Anesthesia#Demo2026'),
     reception: await hashPassword('Reception#Demo2026'),
     records: await hashPassword('Records#Demo2026'),
     lab: await hashPassword('Lab#Demo2026'),
@@ -167,6 +191,9 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['dr.sara@demo.hms', 'د. سارة القحطاني', 'Dr. Sara Alqahtani', 'استشارية طوارئ', 'physician', password.doctor, 'ER'],
     ['nurse@demo.hms', 'مريم الزهراني', 'Mariam Alzahrani', 'ممرضة أولى', 'nurse', password.nurse, 'INP'],
     ['nurse2@demo.hms', 'ليلى العمري', 'Layla Alamri', 'ممرضة مناوبة', 'nurse', password.nurse, 'INP'],
+    ['surgeon@demo.hms', 'د. عبدالله الغامدي', 'Dr. Abdullah Alghamdi', 'استشاري جراحة عامة', 'surgeon', password.surgeon, 'OR'],
+    ['anesthesia@demo.hms', 'د. هدى المطيري', 'Dr. Huda Almutairi', 'استشارية تخدير', 'anesthesiologist', password.anesthesia, 'OR'],
+    ['ornurse@demo.hms', 'سارة الدوسري', 'Sara Aldosari', 'ممرضة غرفة عمليات', 'or_nurse', password.nurse, 'OR'],
     ['reception@demo.hms', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', 'receptionist', password.reception, 'ADM'],
     ['records@demo.hms', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', 'records_officer', password.records, 'ADM'],
     ['lab@demo.hms', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', 'lab_tech', password.lab, 'LAB'],
@@ -206,6 +233,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['فاطمة حسن الشهري', 'Fatimah Alshehri', '1992-09-03', 'female', '1000000002', 'A+', '0559876543'],
     ['سعيد ناصر القحطاني', 'Saeed Alqahtani', '1968-01-25', 'male', '1000000003', 'B+', '0533334444'],
     ['خالد مبارك الدوسري', 'Khalid Aldosari', '1957-03-18', 'male', '1000000004', 'A-', '0567778888'],
+    ['نوف عبدالعزيز الشمري', 'Nouf Alshammari', '1990-11-22', 'female', '1000000005', 'O-', '0572223333'],
   ];
   const patientIds: string[] = [];
   for (let i = 0; i < patientDefs.length; i++) {
@@ -254,6 +282,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.consultation', '{"amount":150}') ON CONFLICT DO NOTHING`, [facilityId]);
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.bed_day', '{"amount":400}') ON CONFLICT DO NOTHING`, [facilityId]);
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.er_visit', '{"amount":200}') ON CONFLICT DO NOTHING`, [facilityId]);
+    await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.surgery_case', '{"amount":3500}') ON CONFLICT DO NOTHING`, [facilityId]);
+    await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.anesthesia_case', '{"amount":1200}') ON CONFLICT DO NOTHING`, [facilityId]);
     for (const [modality, amount] of Object.entries({ xray: 150, ct: 650, mri: 1100, us: 300, mammography: 400, fluoroscopy: 500 })) {
       await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
         [facilityId, `pricing.imaging_${modality}`, JSON.stringify({ amount })]);
@@ -601,9 +631,33 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     );
   }
 
+  // -------------------------------------------------------------- Surgery ----
+  // One elective case booked for the afternoon, so the theatre board, the WHO
+  // checklist, the anaesthesia record and the recovery flow can be exercised.
+  {
+    const surgeon = userIds['surgeon:surgeon@demo.hms'];
+    const anesthetist = userIds['anesthesiologist:anesthesia@demo.hms'];
+    const patientId = patientIds[4];
+    const encounterId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
+         status, chief_complaint, started_at, created_by)
+       VALUES ($1,$2,'ENC-000004',$3,'outpatient',$4,$5,'open','ألم مراري متكرر مع حصوات في المرارة', now() - interval '1 day', $5)`,
+      [encounterId, facilityId, patientId, deptIds.OR, surgeon],
+    );
+    await db.query(
+      `INSERT INTO surgical_cases (id, facility_id, case_no, patient_id, encounter_id, theatre_id, procedure_name,
+         procedure_code, laterality, priority, anesthesia_type, surgeon_id, anesthesiologist_id, scheduled_at,
+         estimated_minutes, notes, created_by)
+       VALUES ($1,$2,'SUR-000001',$3,$4,$5,'استئصال المرارة بالمنظار','0FT44ZZ','none','elective','general',
+               $6,$7, now() + interval '2 hours', 90, 'مريض صائم منذ منتصف الليل، تحاليل التخثر طبيعية', $6)`,
+      [crypto.randomUUID(), facilityId, patientId, encounterId, theatreIds['OR-1'], surgeon, anesthetist],
+    );
+  }
+
   // Seeded documents use fixed numbers; move sequences past them so the first
   // live document cannot collide with demo data.
-  for (const name of ['appointment', 'mrn', 'encounter', 'lab_order', 'prescription', 'invoice', 'claim', 'admission']) {
+  for (const name of ['appointment', 'mrn', 'encounter', 'lab_order', 'prescription', 'invoice', 'claim', 'admission', 'surgery']) {
     await db.query(
       `INSERT INTO number_sequences (facility_id, name, next_value) VALUES ($1,$2,10)
        ON CONFLICT (facility_id, name) DO UPDATE SET next_value = GREATEST(number_sequences.next_value, 10)`,

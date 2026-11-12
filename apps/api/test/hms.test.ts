@@ -66,6 +66,9 @@ beforeAll(async () => {
   agents.lab1 = await login('lab@demo.hms', 'Lab#Demo2026', 'lab1');
   agents.lab2 = await login('lab2@demo.hms', 'Lab#Demo2026', 'lab2');
   agents.nurse2 = await login('nurse2@demo.hms', 'Nurse#Demo2026', 'nurse2');
+  agents.surgeon = await login('surgeon@demo.hms', 'Surgeon#Demo2026', 'surgeon');
+  agents.anesthesiologist = await login('anesthesia@demo.hms', 'Anesthesia#Demo2026', 'anesthesiologist');
+  agents.orNurse = await login('ornurse@demo.hms', 'Nurse#Demo2026', 'orNurse');
   agents.radTech = await login('radiology@demo.hms', 'Radiology#Demo2026', 'radTech');
   agents.radiologist = await login('radiologist@demo.hms', 'Radiology#Demo2026', 'radiologist');
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
@@ -1306,5 +1309,312 @@ describe('nursing: medication administration, care plans and handover', () => {
       allergyChecked: true,
     });
     expect(res.statusCode).toBe(409);
+  });
+});
+
+describe('operating theatre: scheduling, WHO checklist, anaesthesia and recovery', () => {
+  const signIn = {
+    identity_confirmed: true, consent_signed: true, site_marked: true, allergies_checked: true,
+    airway_risk_assessed: true, blood_available: true, imaging_displayed: true,
+  };
+  const timeOut = {
+    team_introduced: true, patient_procedure_confirmed: true, antibiotics_given: true,
+    sterile_field_confirmed: true, critical_events_planned: true, imaging_displayed: true,
+  };
+  const signOut = {
+    procedure_recorded: true, counts_confirmed: true, specimens_labelled: true,
+    equipment_problems: true, recovery_plan: true,
+  };
+
+  it('books a theatre, refuses overlap and refuses staff without the scheduling permission', async () => {
+    const patient = await expectStatus(
+      await call(agents.reception, 'POST', '/api/patients', {
+        fullNameAr: 'هند صالح الحربي', dateOfBirth: '1983-04-19', sex: 'female', acknowledgeDuplicate: true,
+      }),
+      201,
+      'surgical patient',
+    );
+    state.surgeryPatientId = patient.patient.id;
+
+    const appointment = await expectStatus(
+      await call(agents.reception, 'POST', '/api/appointments', {
+        patientId: state.surgeryPatientId,
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'OR').id,
+        doctorId: agents.surgeon.me.user.id,
+        scheduledAt: new Date(Date.now() + 5_400_000).toISOString(),
+      }),
+      201,
+      'surgical appointment',
+    );
+    expect(appointment.id).toBeTruthy();
+
+    const encounter = await expectStatus(
+      await call(agents.surgeon, 'POST', '/api/encounters', {
+        patientId: state.surgeryPatientId,
+        encounterType: 'outpatient',
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'OR').id,
+        chiefComplaint: 'ألم في الربع العلوي الأيمن مع حصوة مرارة مؤكدة بالأشعة',
+      }),
+      201,
+      'surgical encounter',
+    );
+    state.surgeryEncounterId = encounter.id;
+
+    const theatres = await expectStatus(await call(agents.surgeon, 'GET', '/api/surgery/theatres'), 200, 'theatres');
+    expect(theatres.items.length).toBeGreaterThanOrEqual(2);
+    const theatre = theatres.items[1];
+    state.theatreId = theatre.id;
+
+    const scheduledAt = new Date(Date.now() + 6 * 3_600_000).toISOString();
+    const booked = await expectStatus(
+      await call(agents.surgeon, 'POST', '/api/surgery/cases', {
+        patientId: state.surgeryPatientId,
+        encounterId: state.surgeryEncounterId,
+        theatreId: theatre.id,
+        procedureName: 'استئصال المرارة بالمنظار',
+        procedureCode: '0FT44ZZ',
+        priority: 'elective',
+        anesthesiaType: 'general',
+        anesthesiologistId: agents.anesthesiologist.me.user.id,
+        scheduledAt,
+        estimatedMinutes: 90,
+      }),
+      201,
+      'schedule case',
+    );
+    expect(booked.caseNo).toMatch(/^SUR-\d{6}$/);
+    state.surgeryCaseId = booked.id;
+
+    const overlap = await call(agents.surgeon, 'POST', '/api/surgery/cases', {
+      patientId: state.surgeryPatientId,
+      encounterId: state.surgeryEncounterId,
+      theatreId: theatre.id,
+      procedureName: 'عملية متعارضة',
+      scheduledAt: new Date(Date.now() + 6 * 3_600_000 + 15 * 60_000).toISOString(),
+      estimatedMinutes: 60,
+    });
+    expect(overlap.statusCode).toBe(409);
+    expect(overlap.json().error.details.theatreId).toBe(theatre.id);
+
+    const receptionAttempt = await call(agents.reception, 'POST', '/api/surgery/cases', {
+      patientId: state.surgeryPatientId, encounterId: state.surgeryEncounterId, theatreId: theatre.id,
+      procedureName: 'محاولة غير مصرح بها', scheduledAt: new Date(Date.now() + 9 * 3_600_000).toISOString(),
+    });
+    expect(receptionAttempt.statusCode).toBe(403);
+    expect((await call(agents.reception, 'GET', '/api/surgery/board')).statusCode).toBe(403);
+    expect((await call(agents.anesthesiologist, 'POST', '/api/surgery/cases', {
+      patientId: state.surgeryPatientId, encounterId: state.surgeryEncounterId, theatreId: theatre.id,
+      procedureName: 'محاولة تخدير للجدولة', scheduledAt: new Date(Date.now() + 10 * 3_600_000).toISOString(),
+    })).statusCode).toBe(403);
+  });
+
+  it('enforces the pre-anaesthesia and pre-incision checklists before the operation starts', async () => {
+    const early = await call(agents.orNurse, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/checklists`, {
+      phase: 'time_out', items: timeOut,
+    });
+    expect(early.statusCode).toBe(409);
+    expect(early.json().error.message).toContain('قبل التخدير');
+
+    const incomplete = await call(agents.anesthesiologist, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/checklists`, {
+      phase: 'sign_in', items: { ...signIn, consent_signed: false },
+    });
+    expect(incomplete.statusCode).toBe(409);
+    expect(incomplete.json().error.details.missing.map((m: any) => m.key)).toContain('consent_signed');
+
+    const signed = await expectStatus(
+      await call(agents.anesthesiologist, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/checklists`, {
+        phase: 'sign_in', items: signIn,
+      }),
+      201,
+      'sign in',
+    );
+    expect(signed.status).toBe('prepared');
+
+    const repeat = await call(agents.anesthesiologist, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/checklists`, {
+      phase: 'sign_in', items: signIn,
+    });
+    expect(repeat.statusCode).toBe(409);
+
+    const startEarly = await call(agents.surgeon, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/start`);
+    expect(startEarly.statusCode).toBe(409);
+    expect(startEarly.json().error.details.missing).toContain('time_out');
+
+    await expectStatus(
+      await call(agents.orNurse, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/checklists`, {
+        phase: 'time_out', items: timeOut,
+      }),
+      201,
+      'time out',
+    );
+
+    const started = await expectStatus(
+      await call(agents.surgeon, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/start`),
+      200,
+      'start operation',
+    );
+    expect(started.status).toBe('in_progress');
+  });
+
+  it('keeps anaesthesia records append-only and restricted to the anaesthetist', async () => {
+    const surgeonAttempt = await call(agents.surgeon, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/anesthesia`, {
+      phase: 'maintenance', heartRate: 80, spo2: 99,
+    });
+    expect(surgeonAttempt.statusCode).toBe(403);
+
+    const record = await expectStatus(
+      await call(agents.anesthesiologist, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/anesthesia`, {
+        phase: 'induction', heartRate: 79, systolicBp: 116, diastolicBp: 70, spo2: 99,
+        agent: 'بروبوفول', agentDose: '2mg/kg', airway: 'أنبوب رغامي',
+      }),
+      201,
+      'anaesthesia record',
+    );
+    state.anesthesiaRecordId = record.id;
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.surgeon.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE anesthesia_records SET spo2 = 100 WHERE id = $1`, [record.id]),
+      ),
+    ).rejects.toThrow(/append-only|permission denied/);
+
+    const detail = await expectStatus(
+      await call(agents.orNurse, 'GET', `/api/surgery/cases/${state.surgeryCaseId}`),
+      200,
+      'case detail',
+    );
+    expect(detail.anesthesia.length).toBe(1);
+    expect(detail.status).toBe('in_progress');
+    expect(detail.checklists.length).toBe(2);
+  });
+
+  it('requires instrument counts and keeps a documented discrepancy flagged', async () => {
+    const noCounts = await call(agents.surgeon, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/close`, {
+      signOut,
+    });
+    expect(noCounts.statusCode).toBe(400);
+
+    const mismatch = await call(agents.surgeon, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/close`, {
+      signOut,
+      counts: {
+        instruments: { expected: 24, actual: 23 },
+        sponges: { expected: 12, actual: 12 },
+        needles: { expected: 6, actual: 6 },
+      },
+    });
+    expect(mismatch.statusCode).toBe(409);
+    expect(mismatch.json().error.details.mismatches[0].item).toBe('instruments');
+
+    const closed = await expectStatus(
+      await call(agents.surgeon, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/close`, {
+        signOut,
+        counts: {
+          instruments: { expected: 24, actual: 23 },
+          sponges: { expected: 12, actual: 12 },
+          needles: { expected: 6, actual: 6 },
+        },
+        discrepancyNote: 'نقص ملقط واحد: أُجريت صورة أشعة للبطن ولم يوجد جسم غريب، وأُبلغ مسؤول الجودة',
+      }),
+      200,
+      'close with discrepancy',
+    );
+    expect(closed.status).toBe('recovery');
+    expect(closed.countsCorrect).toBe(false);
+    expect(closed.mismatches).toHaveLength(1);
+    expect(closed.fees).toEqual({ procedure: 3500, anesthesia: 1200 });
+    expect(closed.invoiceId).toBeTruthy();
+    state.surgeryInvoiceId = closed.invoiceId;
+
+    const doubleClose = await call(agents.surgeon, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/close`, {
+      signOut,
+      counts: {
+        instruments: { expected: 24, actual: 24 },
+        sponges: { expected: 12, actual: 12 },
+        needles: { expected: 6, actual: 6 },
+      },
+    });
+    expect(doubleClose.statusCode).toBe(409);
+  });
+
+  it('refuses early discharge from recovery and completes the case with billing', async () => {
+    const tooEarly = await call(agents.anesthesiologist, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/recovery`, {
+      aldreteScore: 6, disposition: 'ward',
+    });
+    expect(tooEarly.statusCode).toBe(409);
+
+    await expectStatus(
+      await call(agents.anesthesiologist, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/recovery`, {
+        aldreteScore: 9, painScore: 3, heartRate: 84, systolicBp: 120, diastolicBp: 74, spo2: 98,
+        disposition: 'day_surgery_discharge', notes: 'استقرت الحالة بعد ساعة مراقبة',
+      }),
+      201,
+      'pacu',
+    );
+
+    const detail = await expectStatus(
+      await call(agents.surgeon, 'GET', `/api/surgery/cases/${state.surgeryCaseId}`),
+      200,
+      'completed case',
+    );
+    expect(detail.status).toBe('completed');
+    expect(detail.counts_correct).toBe(false);
+    expect(detail.pacu.aldrete_score).toBe(9);
+    expect(detail.checklists.length).toBe(3);
+
+    const charges = await db.query<any>(
+      `SELECT reference_type, line_total FROM invoice_items WHERE reference_id = $1 ORDER BY reference_type`,
+      [state.surgeryCaseId],
+    );
+    expect(charges.rows.map((r: any) => r.reference_type)).toEqual(['anesthesia_case', 'surgery_case']);
+    expect(Number(charges.rows.reduce((sum: number, r: any) => sum + Number(r.line_total), 0))).toBe(4700);
+
+    const anesthesiaEdit = await call(agents.anesthesiologist, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/anesthesia`, {
+      phase: 'emergence', heartRate: 90,
+    });
+    expect(anesthesiaEdit.statusCode).toBe(409);
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.surgeon.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE surgical_cases SET procedure_name = 'تعديل بعد الإغلاق' WHERE id = $1`, [state.surgeryCaseId]),
+      ),
+    ).rejects.toThrow(/immutable|permission denied/);
+  });
+
+  it('cancels only before the incision and with a documented reason', async () => {
+    const booked = await expectStatus(
+      await call(agents.surgeon, 'POST', '/api/surgery/cases', {
+        patientId: state.surgeryPatientId,
+        encounterId: state.surgeryEncounterId,
+        theatreId: state.theatreId,
+        procedureName: 'تنظير مفصل الركبة',
+        priority: 'elective',
+        anesthesiaType: 'regional',
+        anesthesiologistId: agents.anesthesiologist.me.user.id,
+        scheduledAt: new Date(Date.now() + 30 * 3_600_000).toISOString(),
+        estimatedMinutes: 60,
+      }),
+      201,
+      'second case',
+    );
+    state.cancelledCaseId = booked.id;
+
+    const shortReason = await call(agents.surgeon, 'POST', `/api/surgery/cases/${booked.id}/cancel`, { reason: 'لا' });
+    expect(shortReason.statusCode).toBe(400);
+    expect((await call(agents.orNurse, 'POST', `/api/surgery/cases/${booked.id}/cancel`, { reason: 'إلغاء من التمريض' })).statusCode).toBe(403);
+
+    const cancelled = await expectStatus(
+      await call(agents.surgeon, 'POST', `/api/surgery/cases/${booked.id}/cancel`, { reason: 'ارتفاع حاد في ضغط الدم قبل العملية، تقرر التأجيل' }),
+      200,
+      'cancel case',
+    );
+    expect(cancelled.status).toBe('cancelled');
+
+    const active = await expectStatus(await call(agents.surgeon, 'GET', '/api/surgery/board'), 200, 'active board');
+    expect(active.items.find((i: any) => i.id === booked.id)).toBeFalsy();
+    expect(active.totals.completed_today).toBeGreaterThanOrEqual(1);
+
+    const lateCancel = await call(agents.surgeon, 'POST', `/api/surgery/cases/${state.surgeryCaseId}/cancel`, {
+      reason: 'محاولة إلغاء عملية مكتملة',
+    });
+    expect(lateCancel.statusCode).toBe(409);
   });
 });

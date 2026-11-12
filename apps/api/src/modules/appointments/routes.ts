@@ -95,7 +95,7 @@ export async function appointmentRoutes(app: FastifyInstance) {
         const doctor = await db.query(
           `SELECT u.id FROM users u
              JOIN user_roles ur ON ur.user_id = u.id
-            WHERE u.id = $1 AND ur.facility_id = $2 AND u.is_active = true AND ur.role_id IN ('physician','department_manager')`,
+            WHERE u.id = $1 AND ur.facility_id = $2 AND u.is_active = true AND ur.role_id IN ('physician','department_manager','surgeon','anesthesiologist')`,
           [body.doctorId, auth.activeFacilityId],
         );
         if (!doctor.rows[0]) throw notFound('الطبيب غير متاح في هذه المنشأة');

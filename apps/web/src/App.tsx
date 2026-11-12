@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -204,6 +204,7 @@ function Appointments({ m }: { m: Me }) {
   const [items, setItems] = useState<any[]>([]); const [boot, setBoot] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
   const [patients, setPatients] = useState<any[]>([]);
+  const [doctors, setDoctors] = useState<any[]>([]);
   const [form, setForm] = useState({ patientId: '', departmentId: '', doctorId: '', scheduledAt: '' });
   async function load() {
     try {
@@ -345,6 +346,7 @@ function Inpatient({ m }: { m: Me }) {
   const [beds, setBeds] = useState<any[]>([]); const [wards, setWards] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null); const [admissions, setAdmissions] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
+  const [doctors, setDoctors] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
   const [admit, setAdmit] = useState({ patientId: '', bedId: '', reason: '' });
   const [transfer, setTransfer] = useState<{ id: string; toBedId: string; reason: string } | null>(null);
@@ -891,6 +893,308 @@ function Nursing({ m }: { m: Me }) {
   );
 }
 
+// ---------------------------------------------------------------- Surgery ----
+const SURGERY_STATUS_AR: Record<string, string> = {
+  scheduled: 'مجدولة', prepared: 'جاهزة', in_progress: 'قيد العملية', recovery: 'في الإفاقة',
+  completed: 'مكتملة', cancelled: 'ملغاة',
+};
+const PHASE_AR: Record<string, string> = { sign_in: 'قبل التخدير', time_out: 'قبل الشق', sign_out: 'بعد العملية' };
+
+function Surgery({ m }: { m: Me }) {
+  const [board, setBoard] = useState<any>(null);
+  const [theatres, setTheatres] = useState<any[]>([]);
+  const [detail, setDetail] = useState<any>(null);
+  const [patients, setPatients] = useState<any[]>([]);
+  const [doctors, setDoctors] = useState<any[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [signIn, setSignIn] = useState<Record<string, boolean>>({});
+  const [timeOut, setTimeOut] = useState<Record<string, boolean>>({});
+  const [signOut, setSignOut] = useState<Record<string, boolean>>({});
+  const [counts, setCounts] = useState({ instruments: { expected: 0, actual: 0 }, sponges: { expected: 0, actual: 0 }, needles: { expected: 0, actual: 0 } });
+  const [discrepancy, setDiscrepancy] = useState('');
+  const [anes, setAnes] = useState<any>({ phase: 'maintenance', heartRate: '', systolicBp: '', diastolicBp: '', spo2: '', agent: '', agentDose: '', airway: '' });
+  const [pacu, setPacu] = useState<any>({ aldreteScore: 9, painScore: 0, heartRate: '', systolicBp: '', diastolicBp: '', spo2: '', nausea: false, disposition: 'ward', notes: '' });
+  const [form, setForm] = useState<any>({ patientId: '', encounterId: '', theatreId: '', procedureName: '', anesthesiologistId: '', scheduledAt: '', estimatedMinutes: 60, priority: 'elective', anesthesiaType: 'general' });
+  const [openEncounters, setOpenEncounters] = useState<any[]>([]);
+
+  async function loadBoard() {
+    try {
+      const b = await api<any>('/api/surgery/board?status=active');
+      setBoard(b);
+      if (detail) {
+        const fresh = await api<any>(`/api/surgery/cases/${detail.id}`);
+        setDetail(fresh);
+      }
+    } catch (e: any) { setErr(e.message); }
+  }
+  useEffect(() => {
+    loadBoard();
+    api<any>('/api/surgery/theatres').then((t) => setTheatres(t.items)).catch((e) => setErr(e.message));
+    if (has(m, 'surgery.schedule')) {
+      api<any>('/api/patients?limit=100').then((r) => setPatients(r.items ?? [])).catch(() => setPatients([]));
+      api<any>('/api/meta/bootstrap').then((b) => setDoctors(b.doctors ?? [])).catch(() => setDoctors([]));
+    }
+  }, []);
+
+  // Pre-fill the checklist vocabularies once the board publishes them.
+  useEffect(() => {
+    const cl = board?.checklist;
+    if (!cl) return;
+    setSignIn((cur) => (Object.keys(cur).length ? cur : Object.fromEntries(cl.sign_in.map((i: any) => [i.key, false]))));
+    setTimeOut((cur) => (Object.keys(cur).length ? cur : Object.fromEntries(cl.time_out.map((i: any) => [i.key, false]))));
+    setSignOut((cur) => (Object.keys(cur).length ? cur : Object.fromEntries(cl.sign_out.map((i: any) => [i.key, false]))));
+  }, [board]);
+
+  async function open(c: any) {
+    setErr(null); setOk(null);
+    try {
+      const d = await api<any>(`/api/surgery/cases/${c.id}`);
+      setDetail(d);
+      setSignIn(Object.fromEntries((d.checklists ?? []).filter((x: any) => x.phase === 'sign_in').flatMap((x: any) => Object.entries(x.items).filter(([, v]) => typeof v === 'boolean')) as any));
+      setTimeOut(Object.fromEntries((d.checklists ?? []).filter((x: any) => x.phase === 'time_out').flatMap((x: any) => Object.entries(x.items).filter(([, v]) => typeof v === 'boolean')) as any));
+      setSignOut({});
+      setCounts({ instruments: { expected: 0, actual: 0 }, sponges: { expected: 0, actual: 0 }, needles: { expected: 0, actual: 0 } });
+      setDiscrepancy('');
+    } catch (e: any) { setErr(e.message); }
+  }
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); await loadBoard(); } catch (e: any) { setErr(e.message + (e.details ? ` — ${JSON.stringify(e.details)}` : '')); }
+  }
+  async function pickPatient(id: string) {
+    setForm((f: any) => ({ ...f, patientId: id, encounterId: '' }));
+    setOpenEncounters([]);
+    if (!id) return;
+    try {
+      const p = await api<any>(`/api/patients/${id}`);
+      setOpenEncounters((p.encounters ?? []).filter((e: any) => e.status === 'open'));
+    } catch (e: any) { setErr(e.message); }
+  }
+  const required = board?.checklist ?? { sign_in: [], time_out: [], sign_out: [] };
+  const signInDone = (detail?.checklists ?? []).some((c: any) => c.phase === 'sign_in');
+  const timeOutDone = (detail?.checklists ?? []).some((c: any) => c.phase === 'time_out');
+  function checklistForm(phase: 'sign_in' | 'time_out' | 'sign_out', state: Record<string, boolean>, setState: (v: any) => void) {
+    const items = required[phase] ?? [];
+    return (
+      <div className="space-y-1">
+        {items.map((i: any) => (
+          <label key={i.key} className="flex items-start gap-2 text-xs">
+            <input type="checkbox" className="mt-0.5" checked={!!state[i.key]} onChange={(e) => setState({ ...state, [i.key]: e.target.checked })} />
+            <span>{i.label}</span>
+          </label>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+      {board && <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[['قيد العملية', board.totals.in_progress], ['في الإفاقة', board.totals.recovery], ['مجدولة', board.totals.scheduled], ['مكتملة اليوم', board.totals.completed_today]].map(([l, v]) => (
+          <div key={String(l)} className="card p-3"><p className="text-xs text-slate-500">{l}</p><p className="text-xl font-bold">{v as any}</p></div>
+        ))}
+      </div>}
+
+      <Card title="جدول غرف العمليات">
+        <div className="overflow-x-auto"><table className="w-full min-w-[950px]"><thead><tr>
+          <th className="th">العملية</th><th className="th">المريض</th><th className="th">الغرفة والفريق</th><th className="th">الموعد</th><th className="th">التحقق</th><th className="th">الحالة</th><th className="th"></th>
+        </tr></thead><tbody>
+          {(board?.items ?? []).map((c: any) => (
+            <tr key={c.id} className={c.status === 'in_progress' ? 'bg-emerald-50/60' : c.status === 'recovery' ? 'bg-amber-50/60' : ''}>
+              <td className="td">{c.procedure_name}<span className="block text-xs text-slate-400">{c.case_no} · {c.priority === 'emergency' ? 'طارئة' : c.priority === 'urgent' ? 'عاجلة' : 'مجدولة'}</span></td>
+              <td className="td">{c.patient_name}<span className="block text-xs text-slate-400">{c.mrn}</span></td>
+              <td className="td text-xs">{c.theatre_name}<span className="block text-slate-500">{c.surgeon_name}{c.anesthesiologist_name ? ` · تخدير: ${c.anesthesiologist_name}` : ''}</span></td>
+              <td className="td text-xs">{dt(c.scheduled_at)}<span className="block text-slate-400">{c.estimated_minutes} د</span></td>
+              <td className="td text-xs">{c.preop_checks}/2 قوائم{c.observations > 0 ? ` · ${c.observations} قياس تخدير` : ''}{c.counts_correct === false && <span className="block text-rose-600">عدّ غير مطابق</span>}</td>
+              <td className="td"><span className="badge bg-slate-100 text-slate-700">{SURGERY_STATUS_AR[c.status] ?? c.status}</span></td>
+              <td className="td"><button className="btn-ghost text-xs" onClick={() => open(c)}>فتح</button></td>
+            </tr>
+          ))}
+          {(board?.items ?? []).length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا عمليات نشطة.</td></tr>}
+        </tbody></table></div>
+      </Card>
+
+      {detail && <div className="grid lg:grid-cols-2 gap-3">
+        <Card title={`${detail.procedure_name} — ${detail.patient_name}`} action={<button className="btn-ghost text-xs" onClick={() => setDetail(null)}>إغلاق</button>}>
+          <div className="text-xs space-y-1 text-slate-600">
+            <p>{detail.case_no} · {SURGERY_STATUS_AR[detail.status]} · {detail.theatre_name} · {detail.theatre_code}</p>
+            <p>المريض: {detail.patient_name} ({detail.mrn}) · فصيلة {detail.blood_type ?? '—'} · زيارة {detail.encounter_no}</p>
+            <p>الجراح: {detail.surgeon_name} · التخدير: {detail.anesthesiologist_name ?? '—'} ({detail.anesthesia_type})</p>
+            <p>الموعد: {dt(detail.scheduled_at)} · المدة المتوقعة {detail.estimated_minutes} د</p>
+            {detail.started_at && <p>بدأت: {dt(detail.started_at)} {detail.closed_at ? `· أُغلقت: ${dt(detail.closed_at)}` : ''}</p>}
+            {detail.counts_correct === false && <p className="text-rose-700">⚠ عدّ غير مطابق: {detail.count_discrepancy}</p>}
+            {detail.cancel_reason && <p className="text-rose-700">ملغاة: {detail.cancel_reason}</p>}
+          </div>
+
+          <div className="mt-3 border-t pt-2 space-y-2">
+            {(detail.checklists ?? []).map((ch: any) => (
+              <div key={ch.id} className="border rounded-lg p-2">
+                <p className="text-xs font-semibold">{PHASE_AR[ch.phase]} — {dt(ch.completed_at)} · {ch.completed_by_name ?? ''}</p>
+                <ul className="text-[11px] text-slate-600 mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-2">
+                  {(ch.required ?? []).map((r: any) => <li key={r.key} className={ch.items?.[r.key] === true ? 'text-emerald-700' : 'text-slate-400'}>{ch.items?.[r.key] === true ? '✓' : '✗'} {r.label}</li>)}
+                </ul>
+                {ch.phase === 'sign_out' && <p className="text-[11px] mt-1">{ch.items?.counts?.instruments && `أدوات ${ch.items.counts.instruments.actual}/${ch.items.counts.instruments.expected} · كمامات ${ch.items.counts.sponges.actual}/${ch.items.counts.sponges.expected} · إبر ${ch.items.counts.needles.actual}/${ch.items.counts.needles.expected}`}</p>}
+              </div>
+            ))}
+            {(detail.checklists ?? []).length === 0 && <p className="text-xs text-slate-500">لا قوائم تحقق مسجلة بعد.</p>}
+          </div>
+
+          {detail.status === 'scheduled' && !signInDone && (has(m, 'surgery.checklist') || has(m, 'anesthesia.perform')) && <div className="mt-3 border-t pt-2">
+            <p className="text-sm font-semibold mb-1">قائمة ما قبل التخدير (WHO)</p>
+            {checklistForm('sign_in', signIn, setSignIn)}
+            <button className="btn-primary text-xs mt-2" onClick={() => act(() => api(`/api/surgery/cases/${detail.id}/checklists`, { method: 'POST', body: JSON.stringify({ phase: 'sign_in', items: signIn }) }), 'سُجلت قائمة ما قبل التخدير')}>تسجيل القائمة</button>
+          </div>}
+
+          {detail.status === 'prepared' && !timeOutDone && (has(m, 'surgery.checklist') || has(m, 'anesthesia.perform')) && <div className="mt-3 border-t pt-2">
+            <p className="text-sm font-semibold mb-1">قائمة ما قبل الشق (WHO)</p>
+            {checklistForm('time_out', timeOut, setTimeOut)}
+            <button className="btn-primary text-xs mt-2" onClick={() => act(() => api(`/api/surgery/cases/${detail.id}/checklists`, { method: 'POST', body: JSON.stringify({ phase: 'time_out', items: timeOut }) }), 'سُجلت قائمة ما قبل الشق')}>تسجيل القائمة</button>
+          </div>}
+
+          {detail.status === 'prepared' && timeOutDone && has(m, 'surgery.perform') && <div className="mt-3 border-t pt-2">
+            <button className="btn-primary text-xs" onClick={() => act(() => api(`/api/surgery/cases/${detail.id}/start`, { method: 'POST' }), 'بدأت العملية')}>بدء العملية</button>
+          </div>}
+
+          {['scheduled', 'prepared'].includes(detail.status) && has(m, 'surgery.schedule') && <div className="mt-3 border-t pt-2">
+            <button className="btn-ghost text-xs text-rose-600" onClick={() => {
+              const reason = window.prompt('سبب إلغاء العملية (إلزامي)');
+              if (reason && reason.length >= 5) act(() => api(`/api/surgery/cases/${detail.id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }), 'أُلغيت العملية بسبب موثق');
+            }}>إلغاء العملية</button>
+          </div>}
+        </Card>
+
+        <Card title="التخدير والإفاقة">
+          {detail.status === 'in_progress' && has(m, 'anesthesia.perform') && <div className="space-y-1 mb-3">
+            <p className="text-sm font-semibold">قياس تخدير جديد</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
+              <select className="input" value={anes.phase} onChange={(e) => setAnes({ ...anes, phase: e.target.value })}>
+                <option value="induction">تحريض</option><option value="maintenance">استمرار</option><option value="emergence">إفاقة</option>
+              </select>
+              <input className="input" placeholder="نبض" value={anes.heartRate} onChange={(e) => setAnes({ ...anes, heartRate: e.target.value })} />
+              <input className="input" placeholder="انقباضي" value={anes.systolicBp} onChange={(e) => setAnes({ ...anes, systolicBp: e.target.value })} />
+              <input className="input" placeholder="انبساطي" value={anes.diastolicBp} onChange={(e) => setAnes({ ...anes, diastolicBp: e.target.value })} />
+              <input className="input" placeholder="SpO₂" value={anes.spo2} onChange={(e) => setAnes({ ...anes, spo2: e.target.value })} />
+              <input className="input" placeholder="الدواء التخديري" value={anes.agent} onChange={(e) => setAnes({ ...anes, agent: e.target.value })} />
+            </div>
+            <button className="btn-primary text-xs" disabled={!anes.heartRate && !anes.spo2 && !anes.agent}
+              onClick={() => act(() => api(`/api/surgery/cases/${detail.id}/anesthesia`, { method: 'POST', body: JSON.stringify({
+                phase: anes.phase,
+                heartRate: anes.heartRate ? Number(anes.heartRate) : undefined,
+                systolicBp: anes.systolicBp ? Number(anes.systolicBp) : undefined,
+                diastolicBp: anes.diastolicBp ? Number(anes.diastolicBp) : undefined,
+                spo2: anes.spo2 ? Number(anes.spo2) : undefined,
+                agent: anes.agent || undefined,
+              }) }), 'سُجل قياس التخدير')}>حفظ القياس</button>
+          </div>}
+
+          {(detail.anesthesia ?? []).length > 0 && <div className="mb-3">
+            <p className="text-sm font-semibold mb-1">سجل التخدير ({detail.anesthesia.length})</p>
+            <ul className="text-xs space-y-1 max-h-40 overflow-auto">
+              {detail.anesthesia.map((r: any) => <li key={r.id} className="border-b pb-1">
+                {dt(r.recorded_at)} · {r.phase === 'induction' ? 'تحريض' : r.phase === 'emergence' ? 'إفاقة' : 'استمرار'}
+                {r.heart_rate && ` · نبض ${r.heart_rate}`}{r.systolic_bp && ` · ضغط ${r.systolic_bp}/${r.diastolic_bp ?? '—'}`}{r.spo2 && ` · SpO₂ ${r.spo2}`}
+                {r.agent && ` · ${r.agent} ${r.agent_dose ?? ''}`}
+                <span className="block text-slate-400">{r.recorded_by_name}</span>
+              </li>)}
+            </ul>
+          </div>}
+
+          {detail.status === 'in_progress' && has(m, 'surgery.perform') && <div className="border-t pt-2">
+            <p className="text-sm font-semibold mb-1">قائمة ما بعد العملية وعدّ الأدوات</p>
+            {checklistForm('sign_out', signOut, setSignOut)}
+            <div className="grid grid-cols-3 gap-1 mt-2">
+              {(['instruments', 'sponges', 'needles'] as const).map((k) => (
+                <div key={k} className="text-[11px]">
+                  <p className="text-slate-500">{k === 'instruments' ? 'أدوات' : k === 'sponges' ? 'كمامات' : 'إبر'}</p>
+                  <div className="flex gap-1">
+                    <input className="input" type="number" placeholder="متوقع" value={counts[k].expected} onChange={(e) => setCounts({ ...counts, [k]: { ...counts[k], expected: Number(e.target.value) } })} />
+                    <input className="input" type="number" placeholder="فعلي" value={counts[k].actual} onChange={(e) => setCounts({ ...counts, [k]: { ...counts[k], actual: Number(e.target.value) } })} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <input className="input mt-1" placeholder="ملاحظة عدم التطابق (إلزامية عند الاختلاف)" value={discrepancy} onChange={(e) => setDiscrepancy(e.target.value)} />
+            <button className="btn-primary text-xs mt-2" onClick={() => act(() => api(`/api/surgery/cases/${detail.id}/close`, { method: 'POST', body: JSON.stringify({
+              signOut, counts, ...(discrepancy.length >= 15 ? { discrepancyNote: discrepancy } : {}),
+            }) }), 'أُغلقت العملية وسُجلت الرسوم')}>إغلاق العملية</button>
+          </div>}
+
+          {detail.status === 'recovery' && (has(m, 'anesthesia.perform') || has(m, 'surgery.checklist') || has(m, 'surgery.perform')) && <div className="border-t pt-2">
+            <p className="text-sm font-semibold mb-1">تسجيل الإفاقة (ألدريتي)</p>
+            <div className="grid grid-cols-2 gap-1">
+              <input className="input" type="number" min={0} max={10} placeholder="درجة ألدريتي" value={pacu.aldreteScore} onChange={(e) => setPacu({ ...pacu, aldreteScore: Number(e.target.value) })} />
+              <input className="input" type="number" min={0} max={10} placeholder="درجة الألم" value={pacu.painScore} onChange={(e) => setPacu({ ...pacu, painScore: Number(e.target.value) })} />
+              <input className="input" placeholder="نبض" value={pacu.heartRate} onChange={(e) => setPacu({ ...pacu, heartRate: e.target.value })} />
+              <input className="input" placeholder="SpO₂" value={pacu.spo2} onChange={(e) => setPacu({ ...pacu, spo2: e.target.value })} />
+              <select className="input" value={pacu.disposition} onChange={(e) => setPacu({ ...pacu, disposition: e.target.value })}>
+                <option value="ward">إلى الجناح</option><option value="icu">إلى العناية المركزة</option><option value="day_surgery_discharge">خروج من جراحة اليوم الواحد</option>
+              </select>
+              <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={pacu.nausea} onChange={(e) => setPacu({ ...pacu, nausea: e.target.checked })} /> غثيان</label>
+            </div>
+            <button className="btn-primary text-xs mt-2" disabled={pacu.aldreteScore < 8}
+              onClick={() => act(() => api(`/api/surgery/cases/${detail.id}/recovery`, { method: 'POST', body: JSON.stringify({
+                aldreteScore: Number(pacu.aldreteScore), painScore: Number(pacu.painScore),
+                heartRate: pacu.heartRate ? Number(pacu.heartRate) : undefined, spo2: pacu.spo2 ? Number(pacu.spo2) : undefined,
+                nausea: pacu.nausea, disposition: pacu.disposition, notes: pacu.notes || undefined,
+              }) }), 'أُكملت العملية بعد الإفاقة')}>إتمام العملية</button>
+            <p className="text-[11px] text-slate-500 mt-1">لا يُسمح بالنقل قبل درجة ألدريتي ٨ أو أعلى.</p>
+          </div>}
+
+          {detail.pacu && <div className="mt-3 border-t pt-2 text-xs">
+            <p className="font-semibold">سجل الإفاقة</p>
+            <p>ألدريتي {detail.pacu.aldrete_score}/10 · ألم {detail.pacu.pain_score ?? '—'} · {detail.pacu.disposition === 'ward' ? 'نُقل للجناح' : detail.pacu.disposition === 'icu' ? 'نُقل للعناية' : 'خروج'}</p>
+            <p className="text-slate-500">{dt(detail.pacu.recorded_at)} · {detail.pacu.recorded_by_name}</p>
+          </div>}
+        </Card>
+      </div>}
+
+      {has(m, 'surgery.schedule') && <Card title="جدولة عملية جديدة">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div><label className="label">المريض</label>
+            <select className="input" value={form.patientId} onChange={(e) => pickPatient(e.target.value)}>
+              <option value="">—</option>
+              {patients.map((p: any) => <option key={p.id} value={p.id}>{p.fullNameAr ?? p.full_name_ar} · {p.mrn}</option>)}
+            </select></div>
+          <div><label className="label">الزيارة المفتوحة</label>
+            <select className="input" value={form.encounterId} onChange={(e) => setForm({ ...form, encounterId: e.target.value })}>
+              <option value="">—</option>
+              {openEncounters.map((e: any) => <option key={e.id} value={e.id}>{e.encounter_no} · {e.department}</option>)}
+            </select></div>
+          <div><label className="label">غرفة العمليات</label>
+            <select className="input" value={form.theatreId} onChange={(e) => setForm({ ...form, theatreId: e.target.value })}>
+              <option value="">—</option>
+              {theatres.map((t: any) => <option key={t.id} value={t.id}>{t.name_ar}</option>)}
+            </select></div>
+          <div><label className="label">اسم الإجراء</label>
+            <input className="input" value={form.procedureName} onChange={(e) => setForm({ ...form, procedureName: e.target.value })} /></div>
+          <div><label className="label">التاريخ والوقت</label>
+            <input className="input" type="datetime-local" value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} /></div>
+          <div><label className="label">طبيب التخدير</label>
+            <select className="input" value={form.anesthesiologistId} onChange={(e) => setForm({ ...form, anesthesiologistId: e.target.value })}>
+              <option value="">—</option>
+              {doctors.filter((d: any) => d.role_id === 'anesthesiologist').map((d: any) => <option key={d.id} value={d.id}>{d.full_name_ar}</option>)}
+            </select></div>
+        </div>
+        <button className="btn-primary text-xs mt-2" disabled={!form.patientId || !form.encounterId || !form.theatreId || form.procedureName.length < 3 || !form.scheduledAt}
+          onClick={() => act(async () => {
+            await api('/api/surgery/cases', { method: 'POST', body: JSON.stringify({
+              patientId: form.patientId, encounterId: form.encounterId, theatreId: form.theatreId,
+              procedureName: form.procedureName,
+              anesthesiologistId: form.anesthesiologistId || undefined,
+              priority: form.priority, anesthesiaType: form.anesthesiaType,
+              scheduledAt: new Date(form.scheduledAt).toISOString(),
+              estimatedMinutes: Number(form.estimatedMinutes),
+            }) });
+            setForm({ ...form, procedureName: '', scheduledAt: '', encounterId: '' });
+          }, 'جُدولت العملية')}>جدولة</button>
+        <p className="text-[11px] text-slate-500 mt-1">تُرفض الجدولة عند تعارض الوقت في الغرفة أو إذا لم تملك صلاحية الجدولة.</p>
+      </Card>}
+    </div>
+  );
+}
+
 // -------------------------------------------------------------- Radiology ----
 const MODALITY_LABEL: Record<string, string> = {
   xray: 'أشعة سينية', ct: 'مقطعية', mri: 'رنين مغناطيسي', us: 'سونار', mammography: 'ماموغرام', fluoroscopy: 'فلوروسكوبي',
@@ -1128,6 +1432,7 @@ const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'emergency', label: 'الطوارئ والفرز', perms: ['emergency.triage'] },
   { key: 'inpatient', label: 'التنويم والأسرّة', perms: ['inpatient.admit', 'inpatient.bed.manage'] },
   { key: 'nursing', label: 'التمريض', perms: ['nursing.read'] },
+  { key: 'surgery', label: 'العمليات والتخدير', perms: ['surgery.read'] },
   { key: 'pharmacy', label: 'الصيدلية', perms: ['pharmacy.prescription.read'] },
   { key: 'billing', label: 'الفوترة', perms: ['billing.invoice.read'] },
   { key: 'reports', label: 'التقارير', perms: ['report.read'] },
@@ -1191,6 +1496,7 @@ export default function App() {
         {page === 'emergency' && <Emergency m={auth} />}
         {page === 'inpatient' && <Inpatient m={auth} />}
         {page === 'nursing' && <Nursing m={auth} />}
+        {page === 'surgery' && <Surgery m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
         {page === 'radiology' && <Radiology m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}
