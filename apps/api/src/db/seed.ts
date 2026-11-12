@@ -46,6 +46,11 @@ const PERMISSIONS: [string, string, string][] = [
   ['radiology.report', 'radiology', 'كتابة تقرير الأشعة'],
   ['radiology.verify', 'radiology', 'اعتماد تقرير الأشعة'],
   ['radiology.critical.ack', 'radiology', 'استلام النتائج الحرجة'],
+  ['nursing.read', 'nursing', 'عرض لوحة التمريض'],
+  ['nursing.mar.administer', 'nursing', 'تسجيل إعطاء الأدوية وإتمام مهام الرعاية'],
+  ['nursing.careplan.manage', 'nursing', 'إنشاء وإغلاق خطط الرعاية'],
+  ['nursing.handover.write', 'nursing', 'كتابة تسليم المناوبة'],
+  ['nursing.witness', 'nursing', 'الشهادة على إعطاء الأدوية عالية الخطورة'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -63,9 +68,9 @@ const ALL = PERMISSIONS.map((p) => p[0]);
 const ROLE_PERMS: Record<string, string[]> = {
   system_admin: ['admin.users.read', 'admin.users.manage', 'admin.roles.manage', 'admin.facility.manage', 'admin.sessions.manage', 'admin.settings.manage', 'audit.read', 'report.read'],
   hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read'],
-  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage'],
-  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack'],
-  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read'],
+  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage'],
+  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read'],
+  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness'],
   receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record'],
   records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export'],
   lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read'],
@@ -73,7 +78,7 @@ const ROLE_PERMS: Record<string, string[]> = {
   radiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.report', 'radiology.verify'],
   pharmacist: ['patient.read', 'patient.chart.clinical', 'pharmacy.prescription.read', 'pharmacy.dispense', 'pharmacy.stock.manage', 'billing.invoice.read'],
   accountant: ['patient.read', 'patient.chart.administrative', 'billing.invoice.read', 'billing.invoice.create', 'billing.payment.record', 'billing.invoice.void', 'billing.discount.apply', 'insurance.claim.manage', 'report.read', 'report.export', 'report.finance'],
-  auditor: ['audit.read', 'report.read', 'report.export', 'report.finance', 'admin.users.read'],
+  auditor: ['audit.read', 'report.read', 'report.export', 'report.finance', 'admin.users.read', 'nursing.read'],
   patient: ['portal.self'],
 };
 
@@ -161,6 +166,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['dr.ahmed@demo.hms', 'د. أحمد الحربي', 'Dr. Ahmed Alharbi', 'استشاري طب باطني', 'physician', password.doctor, 'GEN'],
     ['dr.sara@demo.hms', 'د. سارة القحطاني', 'Dr. Sara Alqahtani', 'استشارية طوارئ', 'physician', password.doctor, 'ER'],
     ['nurse@demo.hms', 'مريم الزهراني', 'Mariam Alzahrani', 'ممرضة أولى', 'nurse', password.nurse, 'INP'],
+    ['nurse2@demo.hms', 'ليلى العمري', 'Layla Alamri', 'ممرضة مناوبة', 'nurse', password.nurse, 'INP'],
     ['reception@demo.hms', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', 'receptionist', password.reception, 'ADM'],
     ['records@demo.hms', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', 'records_officer', password.records, 'ADM'],
     ['lab@demo.hms', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', 'lab_tech', password.lab, 'LAB'],
@@ -199,6 +205,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['محمد علي العسيري', 'Mohammed Alaseeri', '1985-04-12', 'male', '1000000001', 'O+', '0501234567'],
     ['فاطمة حسن الشهري', 'Fatimah Alshehri', '1992-09-03', 'female', '1000000002', 'A+', '0559876543'],
     ['سعيد ناصر القحطاني', 'Saeed Alqahtani', '1968-01-25', 'male', '1000000003', 'B+', '0533334444'],
+    ['خالد مبارك الدوسري', 'Khalid Aldosari', '1957-03-18', 'male', '1000000004', 'A-', '0567778888'],
   ];
   const patientIds: string[] = [];
   for (let i = 0; i < patientDefs.length; i++) {
@@ -265,7 +272,11 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   for (const [code, ar, en, form, strength, price, controlled] of drugs) {
     const id = crypto.randomUUID();
     drugIds[code] = id;
-    await db.query('INSERT INTO drugs (id, code, name_ar, name_en, form, strength, price, is_controlled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id, code, ar, en, form, strength, price, controlled]);
+    // Controlled medicines are high-alert: nursing requires a second witness.
+    await db.query(
+      'INSERT INTO drugs (id, code, name_ar, name_en, form, strength, price, is_controlled, is_high_alert) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)',
+      [id, code, ar, en, form, strength, price, controlled],
+    );
     await db.query(
       `INSERT INTO drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost)
        VALUES ($1,$2,$3,$4,current_date + interval '400 days',$5,$6)`,
@@ -463,9 +474,136 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     );
   }
 
+
+  // ------------------------------------------------------- Nursing demo ward --
+  // An admitted patient with an active, dispensed prescription, one overdue dose,
+  // a high-alert medicine awaiting a witnessed dose, a care plan and a handover.
+  {
+    const nurse1 = userIds['nurse:nurse@demo.hms'];
+    const nurse2 = userIds['nurse2:nurse2@demo.hms'];
+    const doctor = userIds['physician:dr.ahmed@demo.hms'];
+    const patientId = patientIds[3];
+
+    const bed = await db.query<{ id: string }>(
+      `SELECT b.id FROM beds b JOIN wards w ON w.id = b.ward_id
+        WHERE b.facility_id = $1 AND b.status = 'available' ORDER BY w.ward_type DESC, b.bed_no LIMIT 1`,
+      [facilityId],
+    );
+    const bedId = bed.rows[0]?.id ?? null;
+
+    const encounterId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
+         status, chief_complaint, started_at, created_by)
+       VALUES ($1,$2,'ENC-000003',$3,'inpatient',$4,$5,'open','متابعة قصور قلب ومضاد تخثر', now() - interval '2 days', $5)`,
+      [encounterId, facilityId, patientId, deptIds.INP, doctor],
+    );
+    const admissionId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO admissions (id, facility_id, admission_no, patient_id, encounter_id, bed_id, attending_doctor_id,
+         admitted_by, admitted_at, status)
+       VALUES ($1,$2,'ADM-000002',$3,$4,$5,$6,$6, now() - interval '2 days', 'active')`,
+      [admissionId, facilityId, patientId, encounterId, bedId, doctor],
+    );
+    if (bedId) await db.query(`UPDATE beds SET status = 'occupied' WHERE id = $1`, [bedId]);
+
+    await db.query(
+      `INSERT INTO vitals (id, facility_id, patient_id, encounter_id, recorded_by, recorded_at, heart_rate,
+         systolic_bp, diastolic_bp, spo2, temperature_c, pain_score)
+       VALUES ($1,$2,$3,$4,$5, now() - interval '3 hours', 88, 132, 78, 94, 37.6, 4)`,
+      [crypto.randomUUID(), facilityId, patientId, encounterId, nurse1],
+    );
+
+    const prescriptionId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO prescriptions (id, facility_id, prescription_no, patient_id, encounter_id, prescribed_by,
+         prescribed_at, status)
+       VALUES ($1,$2,'RX-000002',$3,$4,$5, now() - interval '2 days', 'dispensed')`,
+      [prescriptionId, facilityId, patientId, encounterId, doctor],
+    );
+
+    const items: [string, string, string, string, number, number][] = [
+      ['DRG-PARA', '500mg', 'فموي', 'كل 8 ساعات', 8, 5],
+      ['DRG-WARF', '5mg', 'فموي', 'مرة يوميًا', 24, 22],
+    ];
+    const itemIds: string[] = [];
+    for (const [code, dose, route, frequency, intervalHours, price] of items) {
+      const itemId = crypto.randomUUID();
+      itemIds.push(itemId);
+      await db.query(
+        `INSERT INTO prescription_items (id, facility_id, prescription_id, drug_id, dose, route, frequency,
+           duration_days, quantity, status, price, interval_hours)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,14,28,'dispensed',$8,$9)`,
+        [itemId, facilityId, prescriptionId, drugIds[code], dose, route, frequency, price, intervalHours],
+      );
+      const batch = await db.query<{ id: string }>(
+        `SELECT id FROM drug_batches WHERE facility_id = $1 AND drug_id = $2 ORDER BY expiry_date LIMIT 1`,
+        [facilityId, drugIds[code]],
+      );
+      if (batch.rows[0]) {
+        await db.query(
+          `INSERT INTO dispenses (id, facility_id, prescription_item_id, drug_batch_id, quantity, dispensed_by, dispensed_at)
+           VALUES ($1,$2,$3,$4,28,$5, now() - interval '2 days')`,
+          [crypto.randomUUID(), facilityId, itemId, batch.rows[0].id, userIds['pharmacist:pharmacist@demo.hms']],
+        );
+        await db.query(`UPDATE drug_batches SET qty_on_hand = qty_on_hand - 28 WHERE id = $1`, [batch.rows[0].id]);
+      }
+    }
+
+    // Paracetamol was given 8h45m ago -> next dose is 45 minutes overdue.
+    await db.query(
+      `INSERT INTO medication_administrations (id, facility_id, patient_id, encounter_id, admission_id,
+         prescription_item_id, scheduled_for, administered_at, status, dose_given, route, identity_verified,
+         allergy_checked, administered_by)
+       VALUES ($1,$2,$3,$4,$5,$6, now() - interval '8 hours 45 minutes', now() - interval '8 hours 45 minutes',
+               'given','500mg','فموي',true,true,$7)`,
+      [crypto.randomUUID(), facilityId, patientId, encounterId, admissionId, itemIds[0], nurse1],
+    );
+    // Warfarin (high alert) was given 20h ago with a second nurse as witness.
+    await db.query(
+      `INSERT INTO medication_administrations (id, facility_id, patient_id, encounter_id, admission_id,
+         prescription_item_id, scheduled_for, administered_at, status, dose_given, route, identity_verified,
+         allergy_checked, administered_by, witness_by)
+       VALUES ($1,$2,$3,$4,$5,$6, now() - interval '20 hours', now() - interval '20 hours',
+               'given','5mg','فموي',true,true,$7,$8)`,
+      [crypto.randomUUID(), facilityId, patientId, encounterId, admissionId, itemIds[1], nurse1, nurse2],
+    );
+
+    const planId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO care_plans (id, facility_id, patient_id, encounter_id, admission_id, title, nursing_diagnosis,
+         goals, created_by, created_at)
+       VALUES ($1,$2,$3,$4,$5,'خطة رعاية قصور القلب','خطر عدم استقرار الحالة نتيجة الاحتباس السوائل',
+               'توازن السوائل، وزن يومي، وتقييم ضيق النفس كل 4 ساعات وحماية من النزف', $6, now() - interval '2 days')`,
+      [planId, facilityId, patientId, encounterId, admissionId, nurse1],
+    );
+    const tasks: [string, string, number | null][] = [
+      ['قياس الوزن وتسجيل توازن السوائل', "now() - interval '30 minutes'", 24],
+      ['تقييم ضيق النفس ومعدل التنفس', "now() + interval '2 hours'", 4],
+      ['تقييم علامات النزف (وارفارين)', "now() + interval '6 hours'", 12],
+    ];
+    for (const [description, dueAt, frequencyHours] of tasks) {
+      await db.query(
+        `INSERT INTO care_plan_tasks (id, facility_id, care_plan_id, description, due_at, frequency_hours)
+         VALUES ($1,$2,$3,$4, ${dueAt}, $5)`,
+        [crypto.randomUUID(), facilityId, planId, description, frequencyHours],
+      );
+    }
+
+    await db.query(
+      `INSERT INTO shift_handovers (id, facility_id, patient_id, encounter_id, admission_id, shift, patient_condition,
+         situation, background, assessment, recommendation, from_user_id, to_user_id, handed_over_at)
+       VALUES ($1,$2,$3,$4,$5,'night','improving','المريض هادئ، ألم صدري أقل من أمس بعد المسكن',
+               'قصور قلب مزمن، بدأ وارفارين قبل يومين، وظائف الكلى آخر تحليل طبيعية',
+               'ضغط 132/78 ونبض 88 وتشبع 94%، لا علامات نزف ظاهرة',
+               'متابعة جرعة الوارفارين مع شاهد، وزن صباحي، ومراجعة INR قبل الخروج', $6,$7, now() - interval '6 hours')`,
+      [crypto.randomUUID(), facilityId, patientId, encounterId, admissionId, nurse1, nurse2],
+    );
+  }
+
   // Seeded documents use fixed numbers; move sequences past them so the first
   // live document cannot collide with demo data.
-  for (const name of ['appointment', 'mrn', 'encounter', 'lab_order', 'prescription', 'invoice', 'claim']) {
+  for (const name of ['appointment', 'mrn', 'encounter', 'lab_order', 'prescription', 'invoice', 'claim', 'admission']) {
     await db.query(
       `INSERT INTO number_sequences (facility_id, name, next_value) VALUES ($1,$2,10)
        ON CONFLICT (facility_id, name) DO UPDATE SET next_value = GREATEST(number_sequences.next_value, 10)`,

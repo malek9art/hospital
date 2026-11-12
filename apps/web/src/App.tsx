@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -677,6 +677,220 @@ function Alerts() {
 }
 
 
+
+// ---------------------------------------------------------------- Nursing ----
+const SHIFT_LABEL: Record<string, string> = { morning: 'صباحية', evening: 'مسائية', night: 'ليلية' };
+const CONDITION_LABEL: Record<string, string> = { stable: 'مستقرة', improving: 'تتحسن', deteriorating: 'متدهورة', critical: 'حرجة' };
+const MAR_LABEL: Record<string, string> = { given: 'أُعطي', held: 'أُوقف', refused: 'رفض المريض', missed: 'فائت' };
+
+function Nursing({ m }: { m: Me }) {
+  const [board, setBoard] = useState<any>(null);
+  const [active, setActive] = useState<any>(null); const [mar, setMar] = useState<any>(null);
+  const [plans, setPlans] = useState<any[]>([]); const [handovers, setHandovers] = useState<any[]>([]);
+  const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+  const [dose, setDose] = useState<any>({ itemId: '', status: 'given', doseGiven: '', route: 'فموي', reason: '', witnessUserId: '', identity: false, allergy: false });
+  const [planForm, setPlanForm] = useState({ title: '', diagnosis: '', goals: '', task: '' });
+  const [handoverForm, setHandoverForm] = useState({ shift: 'evening', condition: 'stable', situation: '', background: '', assessment: '', recommendation: '', toUserId: '' });
+  const [nurses, setNurses] = useState<any[]>([]);
+
+  async function loadBoard() {
+    try {
+      const b = await api<any>('/api/nursing/board');
+      setBoard(b);
+      if (active) {
+        const current = b.items.find((i: any) => i.admission_id === active.admission_id);
+        if (current) setActive(current);
+      }
+    } catch (e: any) { setErr(e.message); }
+  }
+  useEffect(() => { loadBoard(); }, []);
+  async function open(item: any) {
+    setErr(null); setActive(item); setOk(null);
+    try {
+      const [m1, p, h] = await Promise.all([
+        api<any>(`/api/nursing/patients/${item.patient_id}/mar`),
+        api<any>(`/api/nursing/care-plans?admissionId=${item.admission_id}`),
+        api<any>(`/api/nursing/handovers?admissionId=${item.admission_id}`),
+      ]);
+      setMar(m1); setPlans(p.plans); setHandovers(h.items);
+      if (m1.due[0]) setDose((d: any) => ({ ...d, itemId: m1.due[0].itemId, doseGiven: m1.due[0].dose, route: m1.due[0].route }));
+      if (nurses.length === 0) {
+        const w = await api<any>('/api/nursing/witnesses');
+        setNurses(w.items);
+      }
+    } catch (e: any) { setErr(e.message); }
+  }
+  async function refresh() { if (active) await open(active); await loadBoard(); }
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); await refresh(); } catch (e: any) { setErr(e.message + (e.details ? ` — ${JSON.stringify(e.details)}` : '')); }
+  }
+  const dueDoses = mar?.due ?? [];
+  const selectedDose = dueDoses.find((d: any) => d.itemId === dose.itemId);
+
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+      {board && <div className="grid grid-cols-3 gap-3">
+        {[['مرضى منومون', board.totals.patients], ['جرعات متأخرة', board.totals.overdue_medications], ['مهام رعاية مستحقة', board.totals.due_tasks]].map(([l, v]) => (
+          <div key={String(l)} className="card p-3"><p className="text-xs text-slate-500">{l}</p><p className="text-xl font-bold">{v as any}</p></div>
+        ))}
+      </div>}
+
+      <Card title="لوحة جناح التمريض">
+        <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr>
+          <th className="th">السرير</th><th className="th">المريض</th><th className="th">آخر علامات</th><th className="th">الجرعة القادمة</th><th className="th">مهام</th><th className="th"></th>
+        </tr></thead><tbody>
+          {(board?.items ?? []).map((i: any) => {
+            const v = i.last_vitals;
+            const overdue = i.next_due?.overdueMinutes > 0;
+            return <tr key={i.admission_id} className={`${overdue ? 'bg-amber-50/70' : ''} ${active?.admission_id === i.admission_id ? 'ring-1 ring-brand-700' : ''}`}>
+              <td className="td">{i.bed_no ? `${i.ward_name} · ${i.room_no}/${i.bed_no}` : 'بدون سرير'}</td>
+              <td className="td">{i.patient_name}<span className="block text-xs text-slate-400">{i.mrn} · {i.doctor_name}</span></td>
+              <td className="td text-xs">{v ? `نبض ${v.heart_rate ?? '—'} · ضغط ${v.systolic_bp ?? '—'}/${v.diastolic_bp ?? '—'} · SpO₂ ${v.spo2 ?? '—'} · ${v.temperature_c ?? '—'}°` : '—'}</td>
+              <td className="td text-xs">{i.next_due ? <>{i.next_due.drug}<span className={`block ${overdue ? 'text-rose-600 font-semibold' : 'text-slate-500'}`}>{overdue ? `متأخرة ${i.next_due.overdueMinutes} د` : `بعد ${Math.max(0, Math.round((new Date(i.next_due.nextDueAt).getTime() - Date.now()) / 60000))} د`}</span></> : '—'}</td>
+              <td className="td text-xs">{i.due_tasks} مستحقة / {i.open_tasks} مفتوحة</td>
+              <td className="td"><button className="btn-primary text-xs" onClick={() => open(i)}>فتح الملف التمريضي</button></td>
+            </tr>;
+          })}
+          {(board?.items ?? []).length === 0 && <tr><td className="td text-slate-500" colSpan={6}>لا مرضى منومين حاليًا.</td></tr>}
+        </tbody></table></div>
+      </Card>
+
+      {active && <div className="grid lg:grid-cols-2 gap-3">
+        <Card title={`سجل إعطاء الأدوية — ${active.patient_name}`} action={<button className="btn-ghost text-xs" onClick={() => setActive(null)}>إغلاق</button>}>
+          {dueDoses.length === 0 && <p className="text-xs text-slate-500">لا أدوية مفعّلة مصروفة لهذا المريض.</p>}
+          {dueDoses.length > 0 && <>
+            <select className="input mb-2" value={dose.itemId} onChange={(e) => {
+              const d = dueDoses.find((x: any) => x.itemId === e.target.value);
+              setDose({ ...dose, itemId: e.target.value, doseGiven: d?.dose ?? '', route: d?.route ?? 'فموي' });
+            }}>
+              {dueDoses.map((d: any) => <option key={d.itemId} value={d.itemId}>{d.drug} · {d.dose} · {d.frequency}{d.highAlert ? ' · عالي الخطورة' : ''}</option>)}
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <div><label className="label">الحالة</label>
+                <select className="input" value={dose.status} onChange={(e) => setDose({ ...dose, status: e.target.value })}>
+                  <option value="given">أُعطي</option><option value="held">إيقاف</option><option value="refused">رفض المريض</option><option value="missed">فائت</option>
+                </select></div>
+              <div><label className="label">الجرعة</label><input className="input" value={dose.doseGiven} onChange={(e) => setDose({ ...dose, doseGiven: e.target.value })} /></div>
+              <div><label className="label">المسار</label><input className="input" value={dose.route} onChange={(e) => setDose({ ...dose, route: e.target.value })} /></div>
+              <div><label className="label">الشاهد (للأدوية عالية الخطورة)</label>
+                <select className="input" value={dose.witnessUserId} onChange={(e) => setDose({ ...dose, witnessUserId: e.target.value })}>
+                  <option value="">—</option>
+                  {nurses.filter((n: any) => n.id !== m.user.id).map((n: any) => <option key={n.id} value={n.id}>{n.full_name_ar}</option>)}
+                </select></div>
+            </div>
+            {dose.status !== 'given' && <input className="input mt-2" placeholder="سبب عدم الإعطاء (إلزامي)" value={dose.reason} onChange={(e) => setDose({ ...dose, reason: e.target.value })} />}
+            {dose.status === 'given' && <div className="flex flex-wrap gap-3 text-xs mt-2">
+              <label className="flex items-center gap-1"><input type="checkbox" checked={dose.identity} onChange={(e) => setDose({ ...dose, identity: e.target.checked })} /> تحققت من هوية المريض</label>
+              <label className="flex items-center gap-1"><input type="checkbox" checked={dose.allergy} onChange={(e) => setDose({ ...dose, allergy: e.target.checked })} /> تحققت من الحساسية</label>
+            </div>}
+            {selectedDose?.highAlert && dose.status === 'given' && <p className="text-xs text-rose-600 mt-1">دواء عالي الخطورة: يلزم شاهد ثانٍ من التمريض.</p>}
+            <button className="btn-primary mt-2" disabled={!dose.itemId || (dose.status !== 'given' && dose.reason.length < 5)}
+              onClick={() => act(() => api('/api/nursing/mar', { method: 'POST', body: JSON.stringify({
+                prescriptionItemId: dose.itemId,
+                status: dose.status,
+                doseGiven: dose.status === 'given' ? dose.doseGiven : undefined,
+                route: dose.status === 'given' ? dose.route : undefined,
+                identityVerified: dose.identity,
+                allergyChecked: dose.allergy,
+                witnessUserId: dose.witnessUserId || undefined,
+                reason: dose.status === 'given' ? undefined : dose.reason,
+              }) }), 'سُجل إعطاء الدواء')}>تسجيل</button>
+          </>}
+          <div className="mt-3 border-t pt-2">
+            <h4 className="text-sm font-semibold mb-1">آخر ما أُعطي</h4>
+            <ul className="text-xs space-y-1 max-h-48 overflow-auto">
+              {(mar?.history ?? []).slice(0, 15).map((h: any) => <li key={h.id} className={h.corrects_id ? 'text-slate-400 line-through' : ''}>
+                {dt(h.administered_at)} — {h.drug} {h.dose_given ?? ''} · <span className={h.status === 'given' ? 'text-emerald-700' : 'text-rose-600'}>{MAR_LABEL[h.status]}</span>
+                {h.witness_name && ` · شاهد: ${h.witness_name}`}{h.reason && ` · ${h.reason}`}
+              </li>)}
+              {(mar?.history ?? []).length === 0 && <li className="text-slate-500">لا سجلات.</li>}
+            </ul>
+          </div>
+        </Card>
+
+        <Card title="خطة الرعاية">
+          {plans.map((p: any) => <div key={p.id} className="border rounded-lg p-2 mb-2">
+            <div className="flex justify-between text-sm"><span className="font-semibold">{p.title}</span><Badge value={p.status === 'active' ? 'open' : 'completed'} /></div>
+            <p className="text-xs text-slate-500">{p.nursing_diagnosis}</p>
+            <p className="text-xs mt-1"><span className="text-slate-500">الأهداف:</span> {p.goals}</p>
+            <ul className="text-xs mt-1 space-y-1">
+              {p.tasks.map((t: any) => <li key={t.id} className="flex justify-between gap-2">
+                <span className={t.status !== 'pending' ? 'line-through text-slate-400' : ''}>{t.description} {t.due_at && <span className="text-slate-400">· {dt(t.due_at)}</span>}</span>
+                {t.status === 'pending' && has(m, 'nursing.mar.administer') && p.status === 'active' && <span className="flex gap-1">
+                  <button className="btn-ghost text-[11px]" onClick={() => act(() => api(`/api/nursing/care-plan-tasks/${t.id}/complete`, { method: 'POST', body: JSON.stringify({ status: 'done' }) }), 'أُتمت المهمة')}>تم</button>
+                  <button className="btn-ghost text-[11px] text-rose-600" onClick={() => {
+                    const note = window.prompt('سبب تخطي المهمة (إلزامي)');
+                    if (note && note.length >= 5) act(() => api(`/api/nursing/care-plan-tasks/${t.id}/complete`, { method: 'POST', body: JSON.stringify({ status: 'skipped', note }) }), 'تم تخطي المهمة بسبب موثق');
+                  }}>تخطٍ</button>
+                </span>}
+              </li>)}
+            </ul>
+            {p.status === 'active' && has(m, 'nursing.careplan.manage') && <div className="flex gap-1 mt-2">
+              <button className="btn-ghost text-[11px]" onClick={() => {
+                const reason = window.prompt('سبب إغلاق الخطة (إلزامي)');
+                if (reason && reason.length >= 5) act(() => api(`/api/nursing/care-plans/${p.id}/close`, { method: 'POST', body: JSON.stringify({ status: 'achieved', reason }) }), 'أُغلقت الخطة');
+              }}>إغلاق الخطة (تحقق الهدف)</button>
+            </div>}
+          </div>)}
+          {plans.length === 0 && <p className="text-xs text-slate-500 mb-2">لا خطة رعاية بعد.</p>}
+          {has(m, 'nursing.careplan.manage') && <div className="border-t pt-2">
+            <input className="input mb-1" placeholder="عنوان الخطة" value={planForm.title} onChange={(e) => setPlanForm({ ...planForm, title: e.target.value })} />
+            <input className="input mb-1" placeholder="التشخيص التمريضي" value={planForm.diagnosis} onChange={(e) => setPlanForm({ ...planForm, diagnosis: e.target.value })} />
+            <input className="input mb-1" placeholder="الأهداف" value={planForm.goals} onChange={(e) => setPlanForm({ ...planForm, goals: e.target.value })} />
+            <input className="input mb-1" placeholder="أول مهمة (اختياري)" value={planForm.task} onChange={(e) => setPlanForm({ ...planForm, task: e.target.value })} />
+            <button className="btn-primary text-xs" disabled={planForm.title.length < 3 || planForm.diagnosis.length < 5 || planForm.goals.length < 5}
+              onClick={() => act(() => api('/api/nursing/care-plans', { method: 'POST', body: JSON.stringify({
+                encounterId: active.encounter_id, title: planForm.title, nursingDiagnosis: planForm.diagnosis, goals: planForm.goals,
+                tasks: planForm.task ? [{ description: planForm.task }] : [],
+              }) }), 'أُنشئت خطة الرعاية', ).then(() => setPlanForm({ title: '', diagnosis: '', goals: '', task: '' }))}>إنشاء خطة</button>
+          </div>}
+        </Card>
+
+        <Card title="تسليم المناوبة (SBAR)" action={<span className="text-xs text-slate-500">{handovers.length} تسليم</span>}>
+          <div className="space-y-2 mb-3">
+            {handovers.map((h: any) => <div key={h.id} className="border rounded-lg p-2 text-xs">
+              <div className="flex justify-between text-slate-500"><span>{SHIFT_LABEL[h.shift]} · {dt(h.handed_over_at)}</span><span>{CONDITION_LABEL[h.patient_condition]} · من {h.from_name} إلى {h.to_name ?? 'مناوبة عامة'}</span></div>
+              <p className="mt-1"><b>S:</b> {h.situation}</p>
+              <p><b>B:</b> {h.background}</p>
+              <p><b>A:</b> {h.assessment}</p>
+              <p><b>R:</b> {h.recommendation}</p>
+              {h.acknowledged_at ? <p className="text-emerald-700 mt-1">استُلم بواسطة {h.acknowledged_by_name} — {dt(h.acknowledged_at)}</p>
+                : has(m, 'nursing.read') && h.from_user_id !== m.user.id && <button className="btn-ghost text-[11px] mt-1" onClick={() => act(() => api(`/api/nursing/handovers/${h.id}/acknowledge`, { method: 'POST' }), 'استُلم التسليم')}>استلام التسليم</button>}
+            </div>)}
+            {handovers.length === 0 && <p className="text-xs text-slate-500">لا تسليمات سابقة.</p>}
+          </div>
+          {has(m, 'nursing.handover.write') && <div className="border-t pt-2">
+            <div className="grid grid-cols-2 gap-1 mb-1">
+              <select className="input" value={handoverForm.shift} onChange={(e) => setHandoverForm({ ...handoverForm, shift: e.target.value })}>
+                <option value="morning">صباحية</option><option value="evening">مسائية</option><option value="night">ليلية</option>
+              </select>
+              <select className="input" value={handoverForm.condition} onChange={(e) => setHandoverForm({ ...handoverForm, condition: e.target.value })}>
+                {Object.entries(CONDITION_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            {[['situation', 'الوضع الحالي (S)'], ['background', 'الخلفية (B)'], ['assessment', 'التقييم (A)'], ['recommendation', 'التوصية (R)']].map(([k, label]) => (
+              <input key={k} className="input mb-1" placeholder={label} value={(handoverForm as any)[k]} onChange={(e) => setHandoverForm({ ...handoverForm, [k]: e.target.value })} />
+            ))}
+            <button className="btn-primary text-xs" disabled={['situation', 'background', 'assessment', 'recommendation'].some((k) => (handoverForm as any)[k].length < 10)}
+              onClick={() => act(() => api('/api/nursing/handovers', { method: 'POST', body: JSON.stringify({
+                encounterId: active.encounter_id,
+                shift: handoverForm.shift,
+                condition: handoverForm.condition,
+                situation: handoverForm.situation,
+                background: handoverForm.background,
+                assessment: handoverForm.assessment,
+                recommendation: handoverForm.recommendation,
+              }) }), 'سُجل تسليم المناوبة').then(() => setHandoverForm({ ...handoverForm, situation: '', background: '', assessment: '', recommendation: '' }))}>تسجيل التسليم</button>
+            <p className="text-[11px] text-slate-500 mt-1">التسليم سجل ثابت لا يُعدّل بعد الحفظ؛ الاستلام يسجّل باسم المستلم.</p>
+          </div>}
+        </Card>
+      </div>}
+    </div>
+  );
+}
+
 // -------------------------------------------------------------- Radiology ----
 const MODALITY_LABEL: Record<string, string> = {
   xray: 'أشعة سينية', ct: 'مقطعية', mri: 'رنين مغناطيسي', us: 'سونار', mammography: 'ماموغرام', fluoroscopy: 'فلوروسكوبي',
@@ -913,6 +1127,7 @@ const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'lab', label: 'المختبر', perms: ['lab.sample.collect'] },
   { key: 'emergency', label: 'الطوارئ والفرز', perms: ['emergency.triage'] },
   { key: 'inpatient', label: 'التنويم والأسرّة', perms: ['inpatient.admit', 'inpatient.bed.manage'] },
+  { key: 'nursing', label: 'التمريض', perms: ['nursing.read'] },
   { key: 'pharmacy', label: 'الصيدلية', perms: ['pharmacy.prescription.read'] },
   { key: 'billing', label: 'الفوترة', perms: ['billing.invoice.read'] },
   { key: 'reports', label: 'التقارير', perms: ['report.read'] },
@@ -975,6 +1190,7 @@ export default function App() {
         {page === 'clinic' && <Clinic m={auth} />}
         {page === 'emergency' && <Emergency m={auth} />}
         {page === 'inpatient' && <Inpatient m={auth} />}
+        {page === 'nursing' && <Nursing m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
         {page === 'radiology' && <Radiology m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}

@@ -8,6 +8,16 @@ import { authorizeChartAccess, loadPatientOr404 } from '../patients/access';
 import { ensureCharge } from '../billing/service';
 import { normalize } from '../../lib/crypto';
 
+/** Maps a free-text dosing frequency to hours so nursing can compute due doses. */
+export function intervalHoursFromFrequency(frequency: string): number {
+  if (/مرتين|twice/i.test(frequency)) return 12;
+  if (/ثلاث|three times/i.test(frequency)) return 8;
+  if (/أربع|four times/i.test(frequency)) return 6;
+  const every = frequency.match(/كل\s*(\d{1,2})\s*ساع/);
+  if (every) return Math.min(168, Math.max(1, Number(every[1])));
+  return 24;
+}
+
 async function encounterContext(db: any, encounterId: string) {
   const res = await db.query(
     `SELECT e.*, p.facility_id AS patient_facility, p.full_name_ar AS patient_name, p.mrn
@@ -350,10 +360,11 @@ export async function encounterRoutes(app: FastifyInstance) {
           const drug = (drugs.rows as any[]).find((d) => d.id === item.drugId);
           await db.query(
             `INSERT INTO prescription_items (id, facility_id, prescription_id, drug_id, dose, route, frequency,
-               duration_days, quantity, instructions, price)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+               duration_days, quantity, instructions, price, interval_hours)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
             [crypto.randomUUID(), enc.facility_id, rxId, item.drugId, item.dose, item.route, item.frequency,
-              item.durationDays, item.quantity, item.instructions ?? null, Number(drug?.price ?? 0)],
+              item.durationDays, item.quantity, item.instructions ?? null, Number(drug?.price ?? 0),
+              intervalHoursFromFrequency(item.frequency)],
           );
         }
         await db.query(

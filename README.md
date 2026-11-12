@@ -73,7 +73,7 @@ npm start               # http://localhost:8080
 
 ## 5) واجهات API (مختصر)
 
-`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (+vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/emergency/{board,arrivals,visits/:id/retriage,visits/:id/status,visits/:id/disposition,patients/:id/identify}` · `/api/reports[/:key]` (JSON/CSV) · `/api/radiology/{worklist,orders/:id/start,orders/:id/perform,orders/:id/reports,reports/:id/finalize,reports/:id/acknowledge,orders/:id/cancel}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
+`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (+vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/emergency/{board,arrivals,visits/:id/retriage,visits/:id/status,visits/:id/disposition,patients/:id/identify}` · `/api/reports[/:key]` (JSON/CSV) · `/api/nursing/{board,witnesses,patients/:id/mar,mar,care-plans,care-plan-tasks/:id/complete,handovers}` · `/api/radiology/{worklist,orders/:id/start,orders/:id/perform,orders/:id/reports,reports/:id/finalize,reports/:id/acknowledge,orders/:id/cancel}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
 
 الكود هو العقد الفعلي (Zod + TypeScript). أخطاء موحدة: `{error:{code,message,details},requestId}`. التغييرات تتطلب رأس `x-csrf-token`، والمدفوعات/الصرف تقبل `Idempotency-Key`.
 
@@ -81,10 +81,10 @@ npm start               # http://localhost:8080
 
 ```
 $ npm test
- ✓ test/hms.test.ts  (47 tests)   ← رحلة مريض + طوارئ + تنويم + أشعة + تقارير + صلاحيات + RLS + تدقيق + FHIR
+ ✓ test/hms.test.ts  (54 tests)   ← رحلة مريض + طوارئ + تنويم + تمريض + أشعة + تقارير + صلاحيات + RLS + تدقيق + FHIR
  ✓ test/unit.test.ts (9 tests)    ← تشفير/TOTP/سلسلة التدقيق/CSV
  Test Files  2 passed (2)
-      Tests  56 passed (56)
+      Tests  63 passed (63)
 ```
 
 التفاصيل الكاملة لكل نوع من الأنواع العشرة المطلوبة في `docs/TEST_PLAN.md`. باختصار:
@@ -97,6 +97,7 @@ $ npm test
 | التنويم والأسرّة | ✅ 5 اختبارات (تنويم، سرير مشغول، نقل، خروج واحتساب، حراسة حالات السرير) |
 | الطوارئ والفرز | ✅ 8 اختبارات (وصول مجهول الهوية، ترتيب حسب الخطورة، إعادة فرز مسببة، رفض الأدوار غير المخولة، خروج/تنويم، مطابقة الهوية) |
 | التقارير والتصدير | ✅ 4 اختبارات (بيانات، BOM، تدقيق التصدير، فصل صلاحية التصدير والمالية، حجب صيغ Excel) |
+| التمريض | ✅ 7 اختبارات (لوحة الجناح، منع الإعطاء قبل الصرف، حقوق الإعطاء الخمسة، منع التكرار والفواصل الدنيا، شاهد الدواء عالي الخطورة، دورة خطة الرعاية، ثبات تسليم المناوبة) |
 | الأشعة والتقارير | ✅ 6 اختبارات (طلب، منع غير المخولين، تنفيذ، تقرير معتمد، ثبات التقرير، نتيجة حرجة واستلامها، إلغاء قبل التصوير) |
 | تدقيق مقاوم للعبث | ✅ تحقق السلسلة + رفض UPDATE/DELETE على السجلات المعتمدة |
 | أمن/تبعيات/اختراق | ⚠️ مغطى جزئيًا؛ **لا SAST/DAST/pen-test** |
@@ -117,6 +118,7 @@ $ npm test
 
 - **الرابط:** https://hospital-hms-cyan.vercel.app
 - **الحسابات:** نفس الحسابات التجريبية أعلاه (`@demo.hms`)، والبيانات تُزرع تلقائيًا عند أول تشغيل.
+- **حسابات إضافية:** `nurse2@demo.hms` و`radiology@demo.hms` و`radiologist@demo.hms` (انظر الجدول أعلى القسم).
 - **الإعداد:** `NODE_ENV=production` · `COOKIE_SECURE=true` · `TRUST_PROXY=true` · `AUTO_BOOTSTRAP=true` · `SEED_DEMO=true` · `PGLITE_DIR=/tmp/hms-data` · وأسرار AES/HMAC بثلاثة مفاتيح `SESSION_SECRET` و`ENCRYPTION_KEY` و`SEARCH_HASH_KEY` (كل واحد base64 لـ32 بايت عشوائية؛ يتحقق منها `config.ts` برسالة واضحة).
 - **قيود صريحة:** قاعدة PGlite داخل الدالة تعمل على `/tmp`، أي أنها **مؤقتة** وتُعاد تهيئتها عند إعادة تشغيل الدالة (cold start) أو تغيّر النسخة. لذلك تظهر لافتة صريحة في الواجهة، وهذا **ليس** بديلًا عن قاعدة إنتاج.
 - **لجعلها دائمة:** اربط Postgres (Neon/Vercel Marketplace) واضبط `DB_MODE=postgres` و`DATABASE_URL` ثم أعد النشر؛ المخطط والهجرات والـRLS متطابقة.

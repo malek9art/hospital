@@ -65,6 +65,7 @@ beforeAll(async () => {
   agents.records = await login('records@demo.hms', 'Records#Demo2026', 'records');
   agents.lab1 = await login('lab@demo.hms', 'Lab#Demo2026', 'lab1');
   agents.lab2 = await login('lab2@demo.hms', 'Lab#Demo2026', 'lab2');
+  agents.nurse2 = await login('nurse2@demo.hms', 'Nurse#Demo2026', 'nurse2');
   agents.radTech = await login('radiology@demo.hms', 'Radiology#Demo2026', 'radTech');
   agents.radiologist = await login('radiologist@demo.hms', 'Radiology#Demo2026', 'radiologist');
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
@@ -943,5 +944,367 @@ describe('radiology orders, signed reports and critical results', () => {
       reason: 'محاولة إلغاء بعد التصوير',
     });
     expect(late.statusCode).toBe(409);
+  });
+});
+
+describe('nursing: medication administration, care plans and handover', () => {
+  it('shows the ward board with an overdue dose and the seeded care-plan work', async () => {
+    const board = await expectStatus(await call(agents.nurse, 'GET', '/api/nursing/board'), 200, 'nursing board');
+    const admitted = board.items.find((i: any) => i.mrn === 'MRN-0004');
+    expect(admitted).toBeTruthy();
+    expect(admitted.ward_name).toBeTruthy();
+    expect(admitted.overdue_medications).toBeGreaterThanOrEqual(1);
+    expect(admitted.next_due.drug).toContain('باراسيتامول');
+    expect(admitted.due_tasks).toBeGreaterThanOrEqual(1);
+    expect(board.totals.patients).toBe(admitted ? board.items.length : 0);
+
+    const forbiddenForReception = await call(agents.reception, 'GET', '/api/nursing/board');
+    expect(forbiddenForReception.statusCode).toBe(403);
+  });
+
+  it('refuses to give a medicine before the pharmacy dispenses it', async () => {
+    const patientRes = await expectStatus(
+      await call(agents.reception, 'POST', '/api/patients', {
+        fullNameAr: 'هيا سالم القرني',
+        dateOfBirth: '1979-02-11',
+        sex: 'female',
+        acknowledgeDuplicate: true,
+      }),
+      201,
+      'nursing patient',
+    );
+    state.nursingPatientId = patientRes.patient.id;
+    // Reception books the visit first: that is what documents the doctor's care
+    // relationship before the admission.
+    const appointment = await expectStatus(
+      await call(agents.reception, 'POST', '/api/appointments', {
+        patientId: state.nursingPatientId,
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'GEN').id,
+        doctorId: agents.doctor.me.user.id,
+        scheduledAt: new Date(Date.now() + 5_400_000).toISOString(),
+      }),
+      201,
+      'nursing appointment',
+    );
+    expect(appointment.id).toBeTruthy();
+    const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds for nursing');
+    const free = beds.beds.find((b: any) => b.bed_status === 'available');
+    expect(free).toBeTruthy();
+    // Admission into the inpatient department is what gives the ward nurse a
+    // documented care relationship with this patient.
+    const admission = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/inpatient/admissions', {
+        patientId: state.nursingPatientId,
+        bedId: free.id,
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'INP').id,
+        reason: 'التهاب رئوي يحتاج مراقبة وعلاجًا وريديًا',
+      }),
+      201,
+      'admit for nursing',
+    );
+    state.nursingEncounterId = admission.encounterId;
+
+    const rx = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/encounters/${state.nursingEncounterId}/prescriptions`, {
+        items: [{
+          drugId: bootstrap.drugs.find((d: any) => d.code === 'DRG-PARA').id,
+          dose: '500mg',
+          route: 'فموي',
+          frequency: 'كل 8 ساعات',
+          durationDays: 3,
+          quantity: 9,
+        }],
+      }),
+      201,
+      'prescription',
+    );
+    state.nursingRxId = rx.id;
+    const detail = await expectStatus(
+      await call(agents.pharmacist, 'GET', `/api/pharmacy/prescriptions/${rx.id}`),
+      200,
+      'prescription detail',
+    );
+    state.nursingItemId = detail.items[0].id;
+
+    const early = await call(agents.nurse, 'POST', '/api/nursing/mar', {
+      prescriptionItemId: state.nursingItemId,
+      status: 'given',
+      doseGiven: '500mg',
+      route: 'فموي',
+      identityVerified: true,
+      allergyChecked: true,
+    });
+    expect(early.statusCode).toBe(409);
+    expect(early.json().error.message).toContain('يصرفه الصيدلي');
+  });
+
+  it('enforces the five rights, one record per slot and append-only corrections', async () => {
+    await expectStatus(
+      await call(agents.pharmacist, 'POST', '/api/pharmacy/dispense', {
+        prescriptionId: state.nursingRxId,
+        items: [{ itemId: state.nursingItemId, quantity: 9 }],
+      }, { 'idempotency-key': crypto.randomUUID() }),
+      200,
+      'dispense',
+    );
+
+    const noRights = await call(agents.nurse, 'POST', '/api/nursing/mar', {
+      prescriptionItemId: state.nursingItemId,
+      status: 'given',
+      doseGiven: '500mg',
+      route: 'فموي',
+      identityVerified: false,
+      allergyChecked: true,
+    });
+    expect(noRights.statusCode).toBe(409);
+    expect(noRights.json().error.message).toContain('هوية المريض');
+
+    const scheduledFor = new Date(Date.now() - 60_000).toISOString();
+    const given = await expectStatus(
+      await call(agents.nurse, 'POST', '/api/nursing/mar', {
+        prescriptionItemId: state.nursingItemId,
+        scheduledFor,
+        status: 'given',
+        doseGiven: '500mg',
+        route: 'فموي',
+        identityVerified: true,
+        allergyChecked: true,
+      }),
+      201,
+      'administer',
+    );
+    state.marId = given.id;
+
+    const duplicate = await call(agents.nurse, 'POST', '/api/nursing/mar', {
+      prescriptionItemId: state.nursingItemId,
+      scheduledFor,
+      status: 'given',
+      doseGiven: '500mg',
+      route: 'فموي',
+      identityVerified: true,
+      allergyChecked: true,
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.nurse.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE medication_administrations SET dose_given = '1000mg' WHERE id = $1`, [given.id]),
+      ),
+    ).rejects.toThrow(/append-only|permission denied/);
+
+    const correction = await expectStatus(
+      await call(agents.nurse2, 'POST', `/api/nursing/mar/${given.id}/correct`, {
+        status: 'held',
+        reason: 'الجرعة أُوقفت بعد مراجعة الطبيب لارتفاع إنزيمات الكبد',
+      }),
+      201,
+      'correct mar',
+    );
+    expect(correction.correctsId).toBe(given.id);
+    const secondCorrection = await call(agents.nurse2, 'POST', `/api/nursing/mar/${given.id}/correct`, {
+      status: 'given',
+      reason: 'محاولة تصحيح ثانية لنفس السجل',
+    });
+    expect(secondCorrection.statusCode).toBe(409);
+  });
+
+  it('requires a second nurse witness for high-alert medicines', async () => {
+    const rx = await expectStatus(
+      await call(agents.doctor, 'POST', `/api/encounters/${state.nursingEncounterId}/prescriptions`, {
+        items: [{
+          drugId: bootstrap.drugs.find((d: any) => d.code === 'DRG-WARF').id,
+          dose: '5mg',
+          route: 'فموي',
+          frequency: 'مرة يوميًا',
+          durationDays: 5,
+          quantity: 5,
+        }],
+      }),
+      201,
+      'high alert prescription',
+    );
+    const detail = await expectStatus(await call(agents.pharmacist, 'GET', `/api/pharmacy/prescriptions/${rx.id}`), 200, 'detail');
+    const itemId = detail.items[0].id;
+    await expectStatus(
+      await call(agents.pharmacist, 'POST', '/api/pharmacy/dispense', {
+        prescriptionId: rx.id,
+        items: [{ itemId, quantity: 5 }],
+      }, { 'idempotency-key': crypto.randomUUID() }),
+      200,
+      'dispense warfarin',
+    );
+
+    const withoutWitness = await call(agents.nurse, 'POST', '/api/nursing/mar', {
+      prescriptionItemId: itemId,
+      status: 'given',
+      doseGiven: '5mg',
+      route: 'فموي',
+      identityVerified: true,
+      allergyChecked: true,
+    });
+    expect(withoutWitness.statusCode).toBe(409);
+    expect(withoutWitness.json().error.message).toContain('شاهد');
+
+    const selfWitness = await call(agents.nurse, 'POST', '/api/nursing/mar', {
+      prescriptionItemId: itemId,
+      status: 'given',
+      doseGiven: '5mg',
+      route: 'فموي',
+      identityVerified: true,
+      allergyChecked: true,
+      witnessUserId: agents.nurse.me.user.id,
+    });
+    expect(selfWitness.statusCode).toBe(409);
+
+    const wrongWitness = await call(agents.nurse, 'POST', '/api/nursing/mar', {
+      prescriptionItemId: itemId,
+      status: 'given',
+      doseGiven: '5mg',
+      route: 'فموي',
+      identityVerified: true,
+      allergyChecked: true,
+      witnessUserId: agents.reception.me.user.id,
+    });
+    expect(wrongWitness.statusCode).toBe(403);
+
+    const witnessed = await expectStatus(
+      await call(agents.nurse, 'POST', '/api/nursing/mar', {
+        prescriptionItemId: itemId,
+        status: 'given',
+        doseGiven: '5mg',
+        route: 'فموي',
+        identityVerified: true,
+        allergyChecked: true,
+        witnessUserId: agents.nurse2.me.user.id,
+      }),
+      201,
+      'witnessed administration',
+    );
+    expect(witnessed.highAlert).toBe(true);
+    expect(witnessed.witness).toContain('ليلى');
+
+    // A second dose minutes after a witnessed one must be refused: the minimum
+    // spacing for a once-daily medicine is half a day.
+    const tooSoon = await call(agents.nurse, 'POST', '/api/nursing/mar', {
+      prescriptionItemId: itemId,
+      status: 'given',
+      doseGiven: '5mg',
+      route: 'فموي',
+      identityVerified: true,
+      allergyChecked: true,
+      witnessUserId: agents.nurse2.me.user.id,
+    });
+    expect(tooSoon.statusCode).toBe(409);
+    expect(tooSoon.json().error.message).toContain('أقل فاصل مسموح');
+  });
+
+  it('runs a care plan from creation to task completion with reasoned skips', async () => {
+    const plan = await expectStatus(
+      await call(agents.nurse, 'POST', '/api/nursing/care-plans', {
+        encounterId: state.nursingEncounterId,
+        title: 'خطة رعاية التهاب رئوي',
+        nursingDiagnosis: 'ضعف التهوية نتيجة تراكم الإفرازات',
+        goals: 'تحسين تشبع الأكسجين فوق 94% وتشجيع التمارين التنفسية كل ساعتين',
+        tasks: [{ description: 'تمارين تنفسية عميقة', frequencyHours: 2 }],
+      }),
+      201,
+      'care plan',
+    );
+    const list = await expectStatus(
+      await call(agents.nurse, 'GET', `/api/nursing/care-plans?encounterId=${state.nursingEncounterId}`),
+      200,
+      'care plan list',
+    );
+    const stored = list.plans.find((p: any) => p.id === plan.id);
+    expect(stored.tasks.length).toBe(1);
+    const taskId = stored.tasks[0].id;
+
+    const skipWithoutReason = await call(agents.nurse, 'POST', `/api/nursing/care-plan-tasks/${taskId}/complete`, {
+      status: 'skipped',
+    });
+    expect(skipWithoutReason.statusCode).toBe(409);
+
+    await expectStatus(
+      await call(agents.nurse, 'POST', `/api/nursing/care-plan-tasks/${taskId}/complete`, {
+        status: 'done',
+        note: 'نُفذت التمارين وجلسة تنفس عميق 10 دقائق',
+      }),
+      200,
+      'complete task',
+    );
+    const twice = await call(agents.nurse, 'POST', `/api/nursing/care-plan-tasks/${taskId}/complete`, { status: 'done' });
+    expect(twice.statusCode).toBe(409);
+
+    await expectStatus(
+      await call(agents.nurse, 'POST', `/api/nursing/care-plans/${plan.id}/close`, {
+        status: 'achieved',
+        reason: 'تحقق الهدف واستقر التشبع عند 97% قبل الخروج',
+      }),
+      200,
+      'close plan',
+    );
+    const closed = await call(agents.nurse, 'POST', `/api/nursing/care-plans/${plan.id}/close`, {
+      status: 'discontinued',
+      reason: 'إغلاق مكرر لنفس الخطة',
+    });
+    expect(closed.statusCode).toBe(409);
+  });
+
+  it('records an immutable SBAR handover that only the receiving nurse can acknowledge', async () => {
+    const handover = await expectStatus(
+      await call(agents.nurse, 'POST', '/api/nursing/handovers', {
+        encounterId: state.nursingEncounterId,
+        shift: 'evening',
+        condition: 'stable',
+        situation: 'المريضة مستقرة بعد أول جرعة مضاد حيوي',
+        background: 'التهاب رئوي مجتمعي، لا حساسية مسجلة، وظائف كلى طبيعية',
+        assessment: 'الحرارة 37.9 والنبض 92 والتشبع 95% على هواء الغرفة',
+        recommendation: 'إكمال المضاد الحيوي ومراقبة الحرارة كل 4 ساعات',
+        toUserId: agents.nurse2.me.user.id,
+      }),
+      201,
+      'handover',
+    );
+    const list = await expectStatus(
+      await call(agents.nurse2, 'GET', `/api/nursing/handovers?patientId=${state.nursingPatientId}`),
+      200,
+      'handover list',
+    );
+    expect(list.items[0].situation).toContain('مستقرة');
+
+    const selfAck = await call(agents.nurse, 'POST', `/api/nursing/handovers/${handover.id}/acknowledge`);
+    expect(selfAck.statusCode).toBe(409);
+
+    await expectStatus(
+      await call(agents.nurse2, 'POST', `/api/nursing/handovers/${handover.id}/acknowledge`),
+      200,
+      'acknowledge handover',
+    );
+    const again = await call(agents.nurse2, 'POST', `/api/nursing/handovers/${handover.id}/acknowledge`);
+    expect(again.statusCode).toBe(409);
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.nurse.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE shift_handovers SET assessment = 'تعديل صامت' WHERE id = $1`, [handover.id]),
+      ),
+    ).rejects.toThrow(/immutable|permission denied/);
+  });
+
+  it('rejects recording administration on a closed encounter', async () => {
+    const closedEncounter = state.nursingEncounterId;
+    await expectStatus(
+      await call(agents.doctor, 'POST', `/api/encounters/${closedEncounter}/close`, { disposition: 'متابعة بعد أسبوع' }),
+      200,
+      'close encounter',
+    );
+    const res = await call(agents.nurse, 'POST', '/api/nursing/mar', {
+      prescriptionItemId: state.nursingItemId,
+      status: 'given',
+      doseGiven: '500mg',
+      route: 'فموي',
+      identityVerified: true,
+      allergyChecked: true,
+    });
+    expect(res.statusCode).toBe(409);
   });
 });

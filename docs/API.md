@@ -89,6 +89,25 @@
 - CSV يبدأ بـ BOM (Excel عربي) وتُحايد الخلايا التي تبدأ بـ `= + - @` لمنع حقن الصيغ.
 - تقرير الإيرادات يتطلب `report.finance` (فصل الأدوار السريرية عن المالية).
 
+## التمريض
+
+| Method | Path | ملاحظات |
+|---|---|---|
+| GET | `/api/nursing/board` | لوحة الجناح: الأسرّة، آخر علامات حيوية، الجرعة القادمة/المتأخرة، مهام الرعاية المستحقة |
+| GET | `/api/nursing/witnesses` | الممرضون الذين يملكون `nursing.witness` في المنشأة |
+| GET | `/api/nursing/patients/:id/mar` | الجرعات المستحقة (محسوبة من `interval_hours`) وسجل الإعطاء |
+| POST | `/api/nursing/mar` | `{prescriptionItemId, status, doseGiven, route, identityVerified, allergyChecked, witnessUserId?, reason?}` |
+| POST | `/api/nursing/mar/:id/correct` | إلحاق تصحيح مرتبط بالسجل الأصلي (لا تعديل ولا حذف) |
+| GET/POST | `/api/nursing/care-plans` · `POST /api/nursing/care-plan-tasks/:id/complete` · `POST /api/nursing/care-plans/:id/close` | خطة رعاية بمهام مجدولة؛ التخطي يتطلب سببًا |
+| GET/POST | `/api/nursing/handovers` · `POST /api/nursing/handovers/:id/acknowledge` | تسليم مناوبة SBAR ثابت لا يُعدّل؛ الاستلام يسجّل باسم المستلم |
+
+**ضوابط سريرية مفروضة في الخادم:**
+- لا إعطاء قبل صرف الصيدلي (`prescription_items.status = 'dispensed'`)، ولا على زيارة مغلقة.
+- الإعطاء يتطلب التحقق من هوية المريض ومن الحساسية، وتسجيل الجرعة والمسار.
+- سجل واحد لكل فترة (`scheduled_for`) + حد أدنى للفاصل بين جرعتين = نصف الفترة الموصوفة.
+- الأدوية عالية الخطورة (`drugs.is_high_alert` أو المقيدة) تتطلب شاهدًا ثانيًا يملك `nursing.witness` ولا يكون منفّذ الإعطاء.
+- `medication_administrations` ملحق فقط (trigger يرفض UPDATE/DELETE)؛ التصحيح سجل جديد عبر `corrects_id`.
+
 ## الأشعة
 
 | Method | Path | ملاحظات |
