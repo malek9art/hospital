@@ -404,6 +404,7 @@ export async function cssdRoutes(app: FastifyInstance) {
         const row = load.rows[0];
         if (!row) throw notFound('دورة التعقيم غير موجودة');
         if (row.status === 'approved') throw conflict('الدورة معتمدة مسبقًا');
+        if (row.recalled_at) throw conflict('الدورة مسحوبة؛ لا يجوز اعتمادها أو الإفراج عن حزمها');
         if (row.status !== 'passed') {
           throw conflict('لا يمكن اعتماد دورة لم تنجح مؤشراتها');
         }
@@ -447,9 +448,10 @@ export async function cssdRoutes(app: FastifyInstance) {
         const row = load.rows[0];
         if (!row) throw notFound('دورة التعقيم غير موجودة');
         if (row.recalled_at) throw conflict('الدورة مسحوبة مسبقًا');
+        if (row.status === 'running') throw conflict('سجّل نتيجة الدورة قبل سحبها');
         const packs = await db.query(
           `SELECT id, pack_no, status, issued_to, issued_to_case_id FROM cssd_packs
-            WHERE load_id = $1 AND status IN ('released','issued','used','quarantined')`,
+            WHERE load_id = $1 AND status IN ('released','issued','used','quarantined','sterilizing')`,
           [id],
         );
         await db.query(

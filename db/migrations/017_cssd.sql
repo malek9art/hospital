@@ -166,7 +166,7 @@ BEGIN
     (OLD.status = 'dirty' AND NEW.status IN ('dirty','washing','quarantined')) OR
     (OLD.status = 'washing' AND NEW.status IN ('washing','packed','quarantined')) OR
     (OLD.status = 'packed' AND NEW.status IN ('packed','sterilizing','quarantined')) OR
-    (OLD.status = 'sterilizing' AND NEW.status IN ('sterilizing','released','quarantined')) OR
+    (OLD.status = 'sterilizing' AND NEW.status IN ('sterilizing','released','quarantined','recalled')) OR
     (OLD.status = 'released' AND NEW.status IN ('released','issued','quarantined','recalled')) OR
     (OLD.status = 'issued' AND NEW.status IN ('issued','used','recalled')) OR
     (OLD.status = 'used' AND NEW.status IN ('used','returned','recalled')) OR

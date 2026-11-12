@@ -2827,6 +2827,52 @@ describe('CSSD sterile processing and infection prevention & control', () => {
     expect(audit.items[0].actor_name).toBeTruthy();
   });
 
+  it('never releases packs from a recalled cycle and refuses to recall a running one', async () => {
+    // The seeded running cycle cannot be recalled before its result is known.
+    const board = await expectStatus(await call(agents.cssd, 'GET', '/api/cssd/board'), 200, 'board');
+    const running = board.loads.find((l: any) => l.status === 'running');
+    expect((await call(agents.cssd2, 'POST', `/api/cssd/loads/${running.id}/recall`, {
+      reason: 'محاولة سحب دورة قيد التشغيل دون نتيجة',
+    })).statusCode).toBe(409);
+
+    const set = await expectStatus(
+      await call(agents.cssd, 'POST', '/api/cssd/sets', {
+        code: 'CSS-SET-30', nameAr: 'طقم دورة مسحوبة', category: 'minor', instrumentCount: 5,
+      }),
+      201,
+      'recalled set',
+    );
+    const pack = await expectStatus(await call(agents.cssd, 'POST', '/api/cssd/packs', { setId: set.id }), 201, 'pack');
+    await call(agents.cssd, 'POST', `/api/cssd/packs/${pack.id}/wash`);
+    await call(agents.cssd, 'POST', `/api/cssd/packs/${pack.id}/pack`);
+    const load = await expectStatus(
+      await call(agents.cssd, 'POST', '/api/cssd/loads', {
+        autoclaveCode: 'STM-04', method: 'plasma', packIds: [pack.id],
+      }),
+      201,
+      'load',
+    );
+    await expectStatus(
+      await call(agents.cssd, 'POST', `/api/cssd/loads/${load.id}/result`, {
+        chemicalIndicator: 'pass', biologicalIndicator: 'pass',
+      }),
+      200,
+      'passing result',
+    );
+    // A passing but recalled cycle must never release its pack.
+    await expectStatus(
+      await call(agents.cssd2, 'POST', `/api/cssd/loads/${load.id}/recall`, {
+        reason: 'اكتشف خلل بالجهاز قبل الاعتماد فسُحبت الدورة',
+      }),
+      200,
+      'recall passed load',
+    );
+    const blocked = await call(agents.cssd2, 'POST', `/api/cssd/loads/${load.id}/approve`);
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().error.message).toMatch(/مسحوبة/);
+    expect((await call(agents.cssd, 'GET', `/api/cssd/packs/${pack.id}`)).json().status).toBe('recalled');
+  });
+
   it('manages isolation orders with a single active precaution and an immutable close', async () => {
     const board = await expectStatus(await call(agents.infection, 'GET', '/api/infection/board'), 200, 'ipc board');
     const active = board.isolations[0];
