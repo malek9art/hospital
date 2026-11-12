@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'icu' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -1195,6 +1195,224 @@ function Surgery({ m }: { m: Me }) {
   );
 }
 
+// -------------------------------------------------------------------- ICU ----
+const VENT_AR: Record<string, string> = {
+  ac: 'تحكم بالحجم/الضغط', simv: 'SIMV', psv: 'دعم ضغط', cpap: 'CPAP', hfnc: 'أكسجين عالي التدفق', room_air: 'هواء محيط',
+};
+const ICU_DISPOSITION_AR: Record<string, string> = {
+  ward: 'نقل للجناح', transfer: 'تحويل لمنشأة أخرى', home: 'خروج للمنزل', deceased: 'وفاة', against_advice: 'خروج ضد النصيحة الطبية',
+};
+const GOAL_LABELS: [string, string][] = [
+  ['sedationTarget', 'هدف التهدئة اليومي'], ['headOfBedElevated', 'رأس السرير مرفوع ٣٠-٤٥°'],
+  ['vapBundle', 'حزمة الوقاية من التهاب الرئة'], ['dvtProphylaxis', 'وقاية من الجلطات'],
+  ['stressUlcerProphylaxis', 'وقاية قرحة الضغط'], ['nutritionPlan', 'خطة تغذية'],
+  ['earlyMobility', 'حركة مبكرة'],
+];
+
+function Icu({ m }: { m: Me }) {
+  const [board, setBoard] = useState<any>(null);
+  const [detail, setDetail] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null); const [ok, setOk] = useState<string | null>(null);
+  const [obs, setObs] = useState<any>({ heartRate: '', systolicBp: '', diastolicBp: '', respRate: '', spo2: '', temperatureC: '', gcs: '', rass: '', urineMl: '', notes: '' });
+  const [vent, setVent] = useState<any>({ mode: 'ac', fio2Pct: 40, peepCmh2o: 5, tidalVolumeMl: 450, setRate: 16, reason: '' });
+  const [sofa, setSofa] = useState<any>({ pao2: 90, fio2Pct: 40, respiratorySupport: true, platelets: 200, bilirubin: 0.8, map: 75, vasopressor: 'none', gcs: 15, creatinine: 1, urine24hMl: '' });
+  const [goals, setGoals] = useState<any>({});
+  const [closing, setClosing] = useState({ disposition: 'ward', note: '' });
+  const [admissions, setAdmissions] = useState<any[]>([]);
+  const [openFor, setOpenFor] = useState('');
+
+  async function load() {
+    try {
+      const b = await api<any>('/api/icu/board');
+      setBoard(b);
+      if (detail) setDetail(await api<any>(`/api/icu/stays/${detail.id}`));
+    } catch (e: any) { setErr(e.message); }
+  }
+  useEffect(() => {
+    load();
+    if (has(m, 'icu.manage')) {
+      api<any>('/api/inpatient/admissions').then((r) => setAdmissions((r.items ?? []).filter((a: any) => a.status === 'active'))).catch(() => setAdmissions([]));
+    }
+  }, []);
+
+  async function open(s: any) {
+    setErr(null); setOk(null);
+    try {
+      const d = await api<any>(`/api/icu/stays/${s.id}`);
+      setDetail(d);
+      const today = d.goals?.[0];
+      setGoals(today ? Object.fromEntries(GOAL_LABELS.map(([k]) => [k, !!today[k]])) : Object.fromEntries(GOAL_LABELS.map(([k]) => [k, false])));
+    } catch (e: any) { setErr(e.message); }
+  }
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); await load(); } catch (e: any) { setErr(e.message + (e.details ? ` — ${JSON.stringify(e.details)}` : '')); }
+  }
+  const latest = detail?.observations?.[0];
+  const latestVent = detail?.ventilator?.[0];
+  const latestSofa = detail?.scores?.[0];
+
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+      {board && <div className="grid grid-cols-3 gap-3">
+        {[['مرضى العناية', board.totals.patients], ['على دعم تنفسي', board.totals.ventilated], ['متوسط SOFA', board.totals.avg_sofa]].map(([l, v]) => (
+          <div key={String(l)} className="card p-3"><p className="text-xs text-slate-500">{l}</p><p className="text-xl font-bold">{v as any}</p></div>
+        ))}
+      </div>}
+
+      <Card title="لوحة العناية المركزة">
+        <div className="overflow-x-auto"><table className="w-full min-w-[950px]"><thead><tr>
+          <th className="th">السرير</th><th className="th">المريض</th><th className="th">آخر علامات</th><th className="th">التنفس</th><th className="th">SOFA</th><th className="th">حزمة اليوم</th><th className="th"></th>
+        </tr></thead><tbody>
+          {(board?.items ?? []).map((i: any) => (
+            <tr key={i.id} className={(i.sofa_total ?? 0) >= 10 ? 'bg-rose-50/60' : ''}>
+              <td className="td text-xs">{i.ward_name} · {i.room_no}/{i.bed_no}<span className="block text-slate-400">{i.stay_no}</span></td>
+              <td className="td">{i.patient_name}<span className="block text-xs text-slate-400">{i.mrn} · {i.admission_no}</span></td>
+              <td className="td text-xs">{i.last_observed_at ? <>نبض {i.heart_rate ?? '—'} · {i.systolic_bp ?? '—'}/{i.diastolic_bp ?? '—'} · SpO₂ {i.spo2 ?? '—'} · GCS {i.gcs ?? '—'}<span className="block text-slate-400">{dt(i.last_observed_at)}</span></> : '—'}</td>
+              <td className="td text-xs">{i.vent_mode ? <>{VENT_AR[i.vent_mode] ?? i.vent_mode}<span className="block text-slate-500">FiO₂ {i.fio2_pct}% · PEEP {i.peep_cmh2o ?? '—'}</span></> : 'بلا دعم'}</td>
+              <td className="td"><span className={`font-bold ${(i.sofa_total ?? 0) >= 10 ? 'text-rose-700' : (i.sofa_total ?? 0) >= 6 ? 'text-amber-700' : 'text-slate-700'}`}>{i.sofa_total ?? '—'}</span>{i.sofa_at && <span className="block text-[11px] text-slate-400">{dt(i.sofa_at)}</span>}</td>
+              <td className="td text-xs">{i.bundled_today ? <span className="text-emerald-700">مسجلة ✓</span> : <span className="text-amber-700">غير مسجلة</span>}</td>
+              <td className="td"><button className="btn-ghost text-xs" onClick={() => open(i)}>فتح الملف</button></td>
+            </tr>
+          ))}
+          {(board?.items ?? []).length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا مرضى في العناية المركزة.</td></tr>}
+        </tbody></table></div>
+      </Card>
+
+      {has(m, 'icu.manage') && <Card title="فتح إقامة عناية مركزة">
+        <div className="flex flex-wrap gap-2 items-end">
+          <div className="flex-1 min-w-[240px]"><label className="label">تنويم نشط في سرير عناية</label>
+            <select className="input" value={openFor} onChange={(e) => setOpenFor(e.target.value)}>
+              <option value="">—</option>
+              {admissions.map((a: any) => <option key={a.id} value={a.id}>{a.admission_no} · {a.patient_name} · {a.ward_name ?? ''}</option>)}
+            </select></div>
+          <button className="btn-primary text-xs" disabled={!openFor} onClick={() => act(async () => {
+            await api('/api/icu/stays', { method: 'POST', body: JSON.stringify({ admissionId: openFor }) });
+            setOpenFor('');
+          }, 'فُتحت إقامة العناية')}>فتح الإقامة</button>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-1">يشترط تنويمًا نشطًا على سرير عناية مركزة؛ النقل يتم من صفحة التنويم.</p>
+      </Card>}
+
+      {detail && <div className="grid lg:grid-cols-2 gap-3">
+        <Card title={`${detail.patient_name} — ${detail.stay_no}`} action={<button className="btn-ghost text-xs" onClick={() => setDetail(null)}>إغلاق</button>}>
+          <div className="text-xs space-y-1 text-slate-600">
+            <p>{detail.ward_name} · {detail.room_no}/{detail.bed_no} · تنويم {detail.admission_no}</p>
+            <p>الطبيب المعالج: {detail.intensivist_name ?? '—'} · بدأت {dt(detail.opened_at)}</p>
+            {detail.admission_note && <p>سبب القبول: {detail.admission_note}</p>}
+            <p>الحالة: {detail.status === 'active' ? 'نشطة' : `مغلقة — ${ICU_DISPOSITION_AR[detail.discharge_disposition] ?? ''}`}</p>
+            {detail.closing_note && <p className="text-slate-500">ملاحظة الإغلاق: {detail.closing_note}</p>}
+            {latestSofa && <p>آخر SOFA: <b>{latestSofa.total}</b> / 24 — {dt(latestSofa.recorded_at)}</p>}
+          </div>
+
+          <div className="mt-3 border-t pt-2">
+            <p className="text-sm font-semibold mb-1">آخر العلامات الحيوية</p>
+            {latest ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 text-xs">
+              <p>نبض: {latest.heart_rate ?? '—'}</p><p>ضغط: {latest.systolic_bp ?? '—'}/{latest.diastolic_bp ?? '—'}</p>
+              <p>تنفس: {latest.resp_rate ?? '—'}</p><p>SpO₂: {latest.spo2 ?? '—'}%</p><p>حرارة: {latest.temperature_c ?? '—'}</p>
+              <p>GCS: {latest.gcs ?? '—'}</p><p>RASS: {latest.rass ?? '—'}</p><p>بول: {latest.urine_ml ?? '—'} مل</p>
+            </div> : <p className="text-xs text-slate-500">لا قياسات بعد.</p>}
+          </div>
+
+          {detail.status === 'active' && has(m, 'icu.chart') && <div className="mt-3 border-t pt-2">
+            <p className="text-sm font-semibold mb-1">تسجيل علامات حيوية</p>
+            <div className="grid grid-cols-3 gap-1">
+              {[['heartRate', 'نبض'], ['systolicBp', 'انقباضي'], ['diastolicBp', 'انبساطي'], ['respRate', 'تنفس'], ['spo2', 'SpO₂'], ['temperatureC', 'حرارة'], ['gcs', 'GCS'], ['rass', 'RASS'], ['urineMl', 'بول/ساعة']].map(([k, label]) => (
+                <input key={k} className="input" placeholder={label} value={obs[k]} onChange={(e) => setObs({ ...obs, [k]: e.target.value })} />
+              ))}
+            </div>
+            <input className="input mt-1" placeholder="ملاحظة (اختياري)" value={obs.notes} onChange={(e) => setObs({ ...obs, notes: e.target.value })} />
+            <button className="btn-primary text-xs mt-2" disabled={!Object.entries(obs).some(([k, v]) => k !== 'notes' && v !== '')}
+              onClick={() => act(async () => {
+                await api(`/api/icu/stays/${detail.id}/observations`, { method: 'POST', body: JSON.stringify({
+                  ...Object.fromEntries(Object.entries(obs).filter(([k, v]) => k !== 'notes' && v !== '').map(([k, v]) => [k, k === 'temperatureC' ? Number(v) : Number(v)])),
+                  notes: obs.notes || undefined,
+                }) });
+                setObs({ ...obs, notes: '' });
+              }, 'سُجلت العلامات الحيوية')}>حفظ القياسات</button>
+          </div>}
+
+          {detail.status === 'active' && has(m, 'icu.discharge') && <div className="mt-3 border-t pt-2">
+            <p className="text-sm font-semibold mb-1">إغلاق الإقامة</p>
+            <div className="flex flex-wrap gap-1">
+              <select className="input" value={closing.disposition} onChange={(e) => setClosing({ ...closing, disposition: e.target.value })}>
+                {Object.entries(ICU_DISPOSITION_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <input className="input flex-1 min-w-[220px]" placeholder="ملاحظة الإغلاق (١٥ حرفًا على الأقل)" value={closing.note} onChange={(e) => setClosing({ ...closing, note: e.target.value })} />
+              <button className="btn-ghost text-xs text-rose-600" disabled={closing.note.trim().length < 15}
+                onClick={() => act(() => api(`/api/icu/stays/${detail.id}/discharge`, { method: 'POST', body: JSON.stringify(closing) }), 'أُغلقت إقامة العناية')}>إغلاق</button>
+            </div>
+          </div>}
+        </Card>
+
+        <Card title="التنفس الصناعي وSOFA وحزمة الرعاية">
+          <div className="text-xs mb-2">
+            <p className="font-semibold">الإعداد الحالي</p>
+            {latestVent ? <p>{VENT_AR[latestVent.mode]} · FiO₂ {latestVent.fio2_pct}% · PEEP {latestVent.peep_cmh2o ?? '—'} · {latestVent.tidal_volume_ml ?? '—'} مل · {latestVent.set_rate ?? '—'} نفس/د</p> : <p className="text-slate-500">لا إعدادات مسجلة.</p>}
+          </div>
+          {detail.status === 'active' && has(m, 'icu.ventilator') && <div className="border-t pt-2 mb-2">
+            <div className="grid grid-cols-2 gap-1">
+              <select className="input" value={vent.mode} onChange={(e) => setVent({ ...vent, mode: e.target.value })}>
+                {Object.entries(VENT_AR).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <input className="input" type="number" placeholder="FiO₂ %" value={vent.fio2Pct} onChange={(e) => setVent({ ...vent, fio2Pct: Number(e.target.value) })} />
+              <input className="input" type="number" placeholder="PEEP" value={vent.peepCmh2o} onChange={(e) => setVent({ ...vent, peepCmh2o: Number(e.target.value) })} />
+              <input className="input" type="number" placeholder="حجم المد" value={vent.tidalVolumeMl} onChange={(e) => setVent({ ...vent, tidalVolumeMl: Number(e.target.value) })} />
+            </div>
+            <input className="input mt-1" placeholder="سبب التغيير" value={vent.reason} onChange={(e) => setVent({ ...vent, reason: e.target.value })} />
+            <button className="btn-primary text-xs mt-1" onClick={() => act(() => api(`/api/icu/stays/${detail.id}/ventilator`, { method: 'POST', body: JSON.stringify({ ...vent, reason: vent.reason || undefined }) }), 'سُجلت إعدادات التنفس (إصدار جديد)')}>تسجيل الإعدادات</button>
+          </div>}
+
+          {(detail.ventilator ?? []).length > 0 && <div className="mb-2">
+            <p className="text-xs font-semibold mb-1">سجل التغييرات</p>
+            <ul className="text-[11px] space-y-1 max-h-28 overflow-auto">
+              {detail.ventilator.map((v: any) => <li key={v.id}>{dt(v.recorded_at)} — {VENT_AR[v.mode]} · FiO₂ {v.fio2_pct}%{v.reason ? ` · ${v.reason}` : ''}<span className="block text-slate-400">{v.recorded_by_name}</span></li>)}
+            </ul>
+          </div>}
+
+          {detail.status === 'active' && has(m, 'icu.chart') && <div className="border-t pt-2">
+            <p className="text-sm font-semibold mb-1">حزمة الرعاية اليومية</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2">
+              {GOAL_LABELS.map(([k, label]) => <label key={k} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={!!goals[k]} onChange={(e) => setGoals({ ...goals, [k]: e.target.checked })} /> {label}</label>)}
+            </div>
+            <button className="btn-primary text-xs mt-1" onClick={() => act(() => api(`/api/icu/stays/${detail.id}/goals`, { method: 'POST', body: JSON.stringify(goals) }), goals && 'حُفظت حزمة اليوم')}>حفظ الحزمة</button>
+          </div>}
+
+          {detail.status === 'active' && has(m, 'icu.chart') && <div className="border-t pt-2 mt-2">
+            <p className="text-sm font-semibold mb-1">حساب SOFA</p>
+            <div className="grid grid-cols-3 gap-1">
+              {[['pao2', 'PaO₂'], ['fio2Pct', 'FiO₂ %'], ['platelets', 'صفيحات'], ['bilirubin', 'بيليروبين'], ['map', 'MAP'], ['gcs', 'GCS'], ['creatinine', 'كرياتينين'], ['urine24hMl', 'بول ٢٤س']].map(([k, label]) => (
+                <input key={k} className="input" type="number" placeholder={label} value={sofa[k]} onChange={(e) => setSofa({ ...sofa, [k]: e.target.value === '' ? '' : Number(e.target.value) })} />
+              ))}
+              <select className="input" value={sofa.vasopressor} onChange={(e) => setSofa({ ...sofa, vasopressor: e.target.value })}>
+                <option value="none">بلا رافع ضغط</option><option value="dobutamine">دوبوتامين</option>
+                <option value="dopamine_low">دوبامين ≤5</option><option value="dopamine_mid">دوبامين &gt;5</option><option value="dopamine_high">دوبامين &gt;15</option>
+                <option value="norepinephrine_low">نورإبينفرين ≤0.1</option><option value="norepinephrine_high">نورإبينفرين &gt;0.1</option>
+                <option value="epinephrine_low">إبينفرين ≤0.1</option><option value="epinephrine_high">إبينفرين &gt;0.1</option>
+              </select>
+              <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={sofa.respiratorySupport} onChange={(e) => setSofa({ ...sofa, respiratorySupport: e.target.checked })} /> دعم تنفسي</label>
+            </div>
+            <button className="btn-primary text-xs mt-1" onClick={() => act(() => api(`/api/icu/stays/${detail.id}/sofa`, { method: 'POST', body: JSON.stringify({
+              ...sofa,
+              pao2: Number(sofa.pao2), fio2Pct: Number(sofa.fio2Pct), platelets: Number(sofa.platelets),
+              bilirubin: Number(sofa.bilirubin), map: Number(sofa.map), gcs: Number(sofa.gcs), creatinine: Number(sofa.creatinine),
+              urine24hMl: sofa.urine24hMl === '' ? undefined : Number(sofa.urine24hMl),
+            }) }), 'حُسبت درجة SOFA')}>حساب وحفظ</button>
+          </div>}
+
+          {(detail.scores ?? []).length > 0 && <div className="border-t pt-2 mt-2">
+            <p className="text-xs font-semibold mb-1">سجل الدرجات</p>
+            <ul className="text-[11px] space-y-1 max-h-28 overflow-auto">
+              {detail.scores.map((s: any) => <li key={s.id}><b>{s.total}</b> / 24 — {dt(s.recorded_at)}<span className="block text-slate-400">تنفس {s.components.respiration} · تخثر {s.components.coagulation} · كبد {s.components.liver} · قلب {s.components.cardiovascular} · وعي {s.components.cns} · كلية {s.components.renal}</span></li>)}
+            </ul>
+          </div>}
+        </Card>
+      </div>}
+    </div>
+  );
+}
+
 // -------------------------------------------------------------- Radiology ----
 const MODALITY_LABEL: Record<string, string> = {
   xray: 'أشعة سينية', ct: 'مقطعية', mri: 'رنين مغناطيسي', us: 'سونار', mammography: 'ماموغرام', fluoroscopy: 'فلوروسكوبي',
@@ -1433,6 +1651,7 @@ const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'inpatient', label: 'التنويم والأسرّة', perms: ['inpatient.admit', 'inpatient.bed.manage'] },
   { key: 'nursing', label: 'التمريض', perms: ['nursing.read'] },
   { key: 'surgery', label: 'العمليات والتخدير', perms: ['surgery.read'] },
+  { key: 'icu', label: 'العناية المركزة', perms: ['icu.read'] },
   { key: 'pharmacy', label: 'الصيدلية', perms: ['pharmacy.prescription.read'] },
   { key: 'billing', label: 'الفوترة', perms: ['billing.invoice.read'] },
   { key: 'reports', label: 'التقارير', perms: ['report.read'] },
@@ -1497,6 +1716,7 @@ export default function App() {
         {page === 'inpatient' && <Inpatient m={auth} />}
         {page === 'nursing' && <Nursing m={auth} />}
         {page === 'surgery' && <Surgery m={auth} />}
+        {page === 'icu' && <Icu m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
         {page === 'radiology' && <Radiology m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}

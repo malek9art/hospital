@@ -54,7 +54,7 @@ npm start               # http://localhost:8080
 
 **منفذ فعليًا ومختبر:** المرضى والملف الطبي (تسجيل/بحث/حساسية/أمراض مزمنة/دمج مدقق/سجل اطلاع) · المواعيد والاستقبال (حجز، منع تعارض، حضور، إلغاء، قائمة اليوم) · العيادات (زيارة، علامات حيوية، SOAP، تشخيص ICD-10، طلب تحاليل، وصفة، إغلاق) · المختبر (عينة، نتيجة، قيم حرجة وتنبيه، اعتماد منفصل، تصحيح مدقق) · الصيدلية (تحقق حساسية/تداخل، صرف FEFO، دفعات ومخزون وحركات، منع تكرار) · **التنويم والأسرّة** (تنويم بأمر طبيب، سرير متاح/مشغول/تنظيف/صيانة، نقل، خروج بملخص، احتساب أيام الإقامة وترحيلها للفاتورة) · **الطوارئ والفرز** (لوحة ESI ١–٥ مرتبة بالخطورة، وصول مجهول الهوية برقم مؤقت ومطابقة هوية موثقة، إعادة فرز مسببة، تحويل للتنويم على نفس الزيارة أو خروج/تحويل) · **التقارير والتصدير** (زيارات، نتائج معتمدة، إيرادات، إشغال؛ CSV عربي مع BOM، حجب صيغ Excel، وتسجيل كل تصدير في التدقيق) · الفوترة (فواتير تلقائية، دفع idempotent، إلغاء مدقق) · التدقيق (سلسلة hash قابلة للتحقق) · إدارة المستخدمين والأدوار والجلسات · تعدد المنشآت (RLS) · لوحة مؤشرات حقيقية · بوابة مريض للقراءة.
 
-**جزئي:** التأمين (بوليصات/مطالبات داخلية بلا ربط خارجي) · الأشعة (طلب/تنفيذ/تقرير معتمد — لا DICOM/PACS) · العمليات (لا ربط بأجهزة التخدير ولا تتبع زرعات/تعقيم)
+**جزئي:** التأمين (بوليصات/مطالبات داخلية بلا ربط خارجي) · الأشعة (طلب/تنفيذ/تقرير معتمد — لا DICOM/PACS) · العمليات (لا ربط بأجهزة التخدير ولا تتبع زرعات/تعقيم) · العناية المركزة (لا ربط مباشر بأجهزة المراقبة/التنفس، ولا APACHE/SAPS ولا خوارزميات فطام آلية)
 
 > **حدود العمليات المعلنة:** الجدول وقوائم التحقق والتخدير والإفاقة وإلغاء العملية كلها منفذة ومختبرة، لكن **لا** يوجد تكامل مع أجهزة التخدير أو نظام التعقيم (CSSD) أو سجل الزرعات — لا يُعرض أي منها كمنفذ. · التمريض (علامات وملاحظات بلا خطط رعاية/تسليم مناوبات) · المخازن (أدوية فقط) · المالية (تحصيل وفواتير بلا دفتر أستاذ) · التقارير (CSV مدقق، PDF عبر طباعة المتصفح) · التكامل (FHIR جزئي: Patient/Observation؛ outbox بلا مزود بريد/SMS) · البوابة (لا حجز/دفع إلكتروني).
 
@@ -75,7 +75,7 @@ npm start               # http://localhost:8080
 
 ## 5) واجهات API (مختصر)
 
-`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (+vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/emergency/{board,arrivals,visits/:id/retriage,visits/:id/status,visits/:id/disposition,patients/:id/identify}` · `/api/reports[/:key]` (JSON/CSV) · `/api/nursing/{board,witnesses,patients/:id/mar,mar,care-plans,care-plan-tasks/:id/complete,handovers}` · `/api/surgery/{theatres,board,cases,cases/:id/checklists,cases/:id/start,cases/:id/anesthesia,cases/:id/close,cases/:id/recovery,cases/:id/cancel}` · `/api/radiology/{worklist,orders/:id/start,orders/:id/perform,orders/:id/reports,reports/:id/finalize,reports/:id/acknowledge,orders/:id/cancel}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
+`/api/auth/{login,logout,me,mfa/*,password,sessions,context}` · `/api/patients` (+chart, allergies, conditions, break-glass, merge, access-log) · `/api/appointments` (+check-in, cancel) · `/api/reception/queue` · `/api/encounters` (+vitals, notes, diagnoses, lab-orders, prescriptions, close) · `/api/lab/{worklist,items/:id/collect,items/:id/result,items/:id/verify,results/:id/amend,alerts}` · `/api/pharmacy/{prescriptions,dispense,stock,stock/receive,movements}` · `/api/billing/{invoices,payments,void,claims,summary}` · `/api/inpatient/{beds,admissions,transfer,discharge}` · `/api/emergency/{board,arrivals,visits/:id/retriage,visits/:id/status,visits/:id/disposition,patients/:id/identify}` · `/api/reports[/:key]` (JSON/CSV) · `/api/nursing/{board,witnesses,patients/:id/mar,mar,care-plans,care-plan-tasks/:id/complete,handovers}` · `/api/surgery/{theatres,board,cases,cases/:id/checklists,cases/:id/start,cases/:id/anesthesia,cases/:id/close,cases/:id/recovery,cases/:id/cancel}` · `/api/icu/{board,stays,stays/:id,stays/:id/observations,stays/:id/ventilator,stays/:id/goals,stays/:id/sofa,stays/:id/discharge}` · `/api/radiology/{worklist,orders/:id/start,orders/:id/perform,orders/:id/reports,reports/:id/finalize,reports/:id/acknowledge,orders/:id/cancel}` · `/api/dashboard` · `/api/admin/{users,roles,sessions,facilities}` · `/api/audit` (+verify) · `/api/meta/{bootstrap,modules}` · `/api/portal/summary` · `/fhir/{metadata,Patient,Observation}`.
 
 الكود هو العقد الفعلي (Zod + TypeScript). أخطاء موحدة: `{error:{code,message,details},requestId}`. التغييرات تتطلب رأس `x-csrf-token`، والمدفوعات/الصرف تقبل `Idempotency-Key`.
 
@@ -83,10 +83,10 @@ npm start               # http://localhost:8080
 
 ```
 $ npm test
- ✓ test/hms.test.ts  (60 tests)   ← رحلة مريض + طوارئ + تنويم + تمريض + عمليات + أشعة + تقارير + صلاحيات + RLS + تدقيق + FHIR
+ ✓ test/hms.test.ts  (66 tests)   ← رحلة مريض + طوارئ + تنويم + تمريض + عمليات + عناية مركزة + أشعة + تقارير + صلاحيات + RLS + تدقيق + FHIR
  ✓ test/unit.test.ts (9 tests)    ← تشفير/TOTP/سلسلة التدقيق/CSV
  Test Files  2 passed (2)
-      Tests  69 passed (69)
+      Tests  75 passed (75)
 ```
 
 التفاصيل الكاملة لكل نوع من الأنواع العشرة المطلوبة في `docs/TEST_PLAN.md`. باختصار:
@@ -100,6 +100,7 @@ $ npm test
 | الطوارئ والفرز | ✅ 8 اختبارات (وصول مجهول الهوية، ترتيب حسب الخطورة، إعادة فرز مسببة، رفض الأدوار غير المخولة، خروج/تنويم، مطابقة الهوية) |
 | التقارير والتصدير | ✅ 4 اختبارات (بيانات، BOM، تدقيق التصدير، فصل صلاحية التصدير والمالية، حجب صيغ Excel) |
 | التمريض | ✅ 7 اختبارات (لوحة الجناح، منع الإعطاء قبل الصرف، حقوق الإعطاء الخمسة، منع التكرار والفواصل الدنيا، شاهد الدواء عالي الخطورة، دورة خطة الرعاية، ثبات تسليم المناوبة) |
+| العناية المركزة | ✅ 6 اختبارات (لوحة العناية وحجب غير المخولين، فتح إقامة على سرير ICU فقط ومنع التكرار، سجل قياسات ملحق ورفض SOFA بدون علامات حديثة، إصدارات التنفس الصناعي وضوابط FiO₂، حساب SOFA المطابق للمعايير وحزمة يومية واحدة، إغلاق الإقامة وتجميد الملف) |
 | العمليات والتخدير | ✅ 6 اختبارات (جدولة ومنع تعارض الغرف، قوائم WHO قبل التخدير وقبل الشق، سجل تخدير ملحق ومقيد لطبيب التخدير، عدّ الأدوات والإبر وحظر الإغلاق عند الاختلاف، إفاقة ألدريتي والرسوم، إلغاء قبل الشق) |
 | الأشعة والتقارير | ✅ 6 اختبارات (طلب، منع غير المخولين، تنفيذ، تقرير معتمد، ثبات التقرير، نتيجة حرجة واستلامها، إلغاء قبل التصوير) |
 | تدقيق مقاوم للعبث | ✅ تحقق السلسلة + رفض UPDATE/DELETE على السجلات المعتمدة |
@@ -121,7 +122,7 @@ $ npm test
 
 - **الرابط:** https://hospital-hms-cyan.vercel.app
 - **الحسابات:** نفس الحسابات التجريبية أعلاه (`@demo.hms`)، والبيانات تُزرع تلقائيًا عند أول تشغيل.
-- **حسابات إضافية:** `nurse2@demo.hms` و`radiology@demo.hms` و`radiologist@demo.hms` و`surgeon@demo.hms` و`anesthesia@demo.hms` و`ornurse@demo.hms` (كلمات المرور في أعلى الملف).
+- **حسابات إضافية:** `nurse2@demo.hms` و`radiology@demo.hms` و`radiologist@demo.hms` و`surgeon@demo.hms` و`anesthesia@demo.hms` و`ornurse@demo.hms` و`intensivist@demo.hms` و`icunurse@demo.hms` (كلمات المرور في أعلى الملف).
 - **الإعداد:** `NODE_ENV=production` · `COOKIE_SECURE=true` · `TRUST_PROXY=true` · `AUTO_BOOTSTRAP=true` · `SEED_DEMO=true` · `PGLITE_DIR=/tmp/hms-data` · وأسرار AES/HMAC بثلاثة مفاتيح `SESSION_SECRET` و`ENCRYPTION_KEY` و`SEARCH_HASH_KEY` (كل واحد base64 لـ32 بايت عشوائية؛ يتحقق منها `config.ts` برسالة واضحة).
 - **قيود صريحة:** قاعدة PGlite داخل الدالة تعمل على `/tmp`، أي أنها **مؤقتة** وتُعاد تهيئتها عند إعادة تشغيل الدالة (cold start) أو تغيّر النسخة. لذلك تظهر لافتة صريحة في الواجهة، وهذا **ليس** بديلًا عن قاعدة إنتاج.
 - **لجعلها دائمة:** اربط Postgres (Neon/Vercel Marketplace) واضبط `DB_MODE=postgres` و`DATABASE_URL` ثم أعد النشر؛ المخطط والهجرات والـRLS متطابقة.
@@ -141,6 +142,14 @@ $ npm test
 3. ادخل بـ`anesthesia@demo.hms` / `Anesthesia#Demo2026` وسجّل قياس تخدير (نبض/ضغط/SpO₂/دواء) — السجل ملحق لا يُعدّل.
 4. أغلق العملية بعد تسجيل عدّ الأدوات؛ عند اختلاف العدد يُرفض الإغلاق إلا بملاحظة تصحيحية موثقة تبقى ظاهرة كتحذير.
 5. سجّل الإفاقة بدرجة ألدريتي ≥ ٨ لتكتمل العملية وتُنشأ فاتورة العملية (٣٥٠٠) والتخدير (١٢٠٠) تلقائيًا.
+
+### جرّب العناية المركزة (٥ دقائق)
+
+1. ادخل بـ`intensivist@demo.hms` / `ICU#Demo2026` وافتح **العناية المركزة** — المريض `MRN-0004` على سرير ICU مع SOFA = 3 ودعم HFNC بFiO₂ 40%، وحزمة الرعاية مسجلة اليوم.
+2. افتح الملف وسجّل علامات حيوية جديدة (نبض/ضغط/SpO₂/GCS) — السجل ملحق ولا يقبل التعديل.
+3. غيّر إعدادات التنفس (جرّب وضع «هواء محيط» مع FiO₂ 50% ليُرفض)، ثم احسب **SOFA** بعد إدخال PaO₂ وFiO₂ والصفيحات والبيليروبين وMAP وGCS والكرياتينين.
+4. ادخل بـ`icunurse@demo.hms` / `ICU#Demo2026` لتعبئة حزمة الرعاية اليومية — لا يستطيع التمريض فتح إقامة جديدة ولا إغلاقها.
+5. أغلق الإقامة بملاحظة ≥ ١٥ حرفًا؛ بعدها يُرفض أي قياس جديد وتُرفض إعادة الإغلاق.
 
 ## 8) المخاطر المتبقية (مهمة)
 

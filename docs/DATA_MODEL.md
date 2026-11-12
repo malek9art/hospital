@@ -47,7 +47,7 @@ erDiagram
   USERS ||--o{ BREAK_GLASS_GRANTS : emergency
 ```
 
-## الجداول (62)
+## الجداول (67)
 
 | المجموعة | الجداول |
 |---|---|
@@ -62,6 +62,7 @@ erDiagram
 | التمريض | `medication_administrations`, `care_plans`, `care_plan_tasks`, `shift_handovers` |
 | الأشعة | `imaging_orders`, `imaging_reports` |
 | العمليات والتخدير | `operating_theatres`, `surgical_cases`, `surgical_checklists`, `anesthesia_records`, `pacu_records` |
+| العناية المركزة | `icu_stays`, `icu_observations`, `icu_ventilator_settings`, `icu_daily_goals`, `icu_scores` |
 | عرض للمريض | `portal_clinicians` (VIEW) |
 
 ## قيود سلامة مهمة
@@ -81,6 +82,7 @@ erDiagram
 | `imaging_reports` يمنع تعديل التقرير بعد الاعتماد (`report_guard`) | ثبات التقرير المعتمد |
 | `surgical_checklists` / `anesthesia_records` / `pacu_records` ملحق فقط، و`surgical_cases` مغلقة بعد الإكمال أو الإلغاء | ثبات السجل الجراحي وقوائم السلامة |
 | `UNIQUE (theatre_id, scheduled_at)` + فحص تقاطع الأوقات في الـAPI | منع جدولة عمليتين في غرفة واحدة |
+| `icu_observations` / `icu_ventilator_settings` / `icu_scores` ملحق فقط، وإقامة العناية مجمّدة بعد الإغلاق، وفهرس فريد لإقامة نشطة لكل تنويم/سرير | سلامة ملف العناية المركزة ومنع الازدواج |
 | `hash_version` على `audit_log` | تطور خوارزمية السلسلة دون إبطال صامت |
 
 ## معايير الترميز المستخدمة

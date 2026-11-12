@@ -56,6 +56,11 @@ const PERMISSIONS: [string, string, string][] = [
   ['surgery.perform', 'surgery', 'بدء العملية وإغلاقها وتوقيع المسار الجراحي'],
   ['surgery.checklist', 'surgery', 'إتمام قوائم التحقق الجراحية وتسجيل الإفاقة'],
   ['anesthesia.perform', 'anesthesia', 'تسجيل قوائم ما قبل التخدير وقياسات التخدير'],
+  ['icu.read', 'icu', 'عرض لوحة العناية المركزة والملف'],
+  ['icu.chart', 'icu', 'تسجيل علامات حيوية وSOFA وحزمة الرعاية اليومية'],
+  ['icu.ventilator', 'icu', 'إدارة إعدادات التنفس الصناعي'],
+  ['icu.manage', 'icu', 'فتح إقامة عناية مركزة'],
+  ['icu.discharge', 'icu', 'إغلاق إقامة العناية المركزة'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -76,6 +81,8 @@ const ROLE_PERMS: Record<string, string[]> = {
   surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read'],
   anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read'],
   or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read'],
+  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read'],
+  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness'],
   department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule'],
   physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule'],
   nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness'],
@@ -99,6 +106,8 @@ const ROLES: [string, string, string][] = [
   ['surgeon', 'جراح', 'Surgeon'],
   ['anesthesiologist', 'طبيب تخدير', 'Anesthesiologist'],
   ['or_nurse', 'تمريض عمليات', 'Operating-room nurse'],
+  ['intensivist', 'طبيب عناية مركزة', 'Intensivist'],
+  ['icu_nurse', 'تمريض عناية مركزة', 'ICU nurse'],
   ['receptionist', 'استقبال', 'Receptionist'],
   ['records_officer', 'السجلات الطبية', 'Medical records'],
   ['lab_tech', 'فني مختبر', 'Lab technician'],
@@ -174,6 +183,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     nurse: await hashPassword('Nurse#Demo2026'),
     surgeon: await hashPassword('Surgeon#Demo2026'),
     anesthesia: await hashPassword('Anesthesia#Demo2026'),
+    icu: await hashPassword('ICU#Demo2026'),
     reception: await hashPassword('Reception#Demo2026'),
     records: await hashPassword('Records#Demo2026'),
     lab: await hashPassword('Lab#Demo2026'),
@@ -194,6 +204,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['surgeon@demo.hms', 'د. عبدالله الغامدي', 'Dr. Abdullah Alghamdi', 'استشاري جراحة عامة', 'surgeon', password.surgeon, 'OR'],
     ['anesthesia@demo.hms', 'د. هدى المطيري', 'Dr. Huda Almutairi', 'استشارية تخدير', 'anesthesiologist', password.anesthesia, 'OR'],
     ['ornurse@demo.hms', 'سارة الدوسري', 'Sara Aldosari', 'ممرضة غرفة عمليات', 'or_nurse', password.nurse, 'OR'],
+    ['intensivist@demo.hms', 'د. فيصل الحربي', 'Dr. Faisal Alharbi', 'استشاري عناية مركزة', 'intensivist', password.icu, 'INP'],
+    ['icunurse@demo.hms', 'أمل الجهني', 'Amal Aljohani', 'ممرضة عناية مركزة', 'icu_nurse', password.icu, 'INP'],
     ['reception@demo.hms', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', 'receptionist', password.reception, 'ADM'],
     ['records@demo.hms', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', 'records_officer', password.records, 'ADM'],
     ['lab@demo.hms', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', 'lab_tech', password.lab, 'LAB'],
@@ -324,7 +336,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   await db.query(`INSERT INTO wards (id, facility_id, name_ar, name_en, ward_type) VALUES ($1,$2,'جناح عام','General Ward','general')`, [wardId, facilityId]);
   const icuId = crypto.randomUUID();
   await db.query(`INSERT INTO wards (id, facility_id, name_ar, name_en, ward_type) VALUES ($1,$2,'العناية المركزة','ICU','icu')`, [icuId, facilityId]);
-  for (const [ward, label, count] of [[wardId, 'G', 4], [icuId, 'ICU', 2]] as const) {
+  for (const [ward, label, count] of [[wardId, 'G', 4], [icuId, 'ICU', 4]] as const) {
     for (let i = 1; i <= count; i++) {
       const roomId = crypto.randomUUID();
       await db.query(`INSERT INTO rooms (id, facility_id, ward_id, room_no, room_type) VALUES ($1,$2,$3,$4,'standard')`, [roomId, facilityId, ward, `${label}-0${i}`]);
@@ -655,9 +667,63 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     );
   }
 
+  // ------------------------------------------------------------------- ICU ----
+  // The cardiac patient admitted to the ICU bed gets a live ICU stay with a
+  // charted observation, high-flow oxygen settings, today's care bundle and a
+  // SOFA score computed from the same values the API would use.
+  {
+    const intensivist = userIds['intensivist:intensivist@demo.hms'];
+    const icuNurse = userIds['icu_nurse:icunurse@demo.hms'];
+    const adm = await db.query<{ id: string; patient_id: string; encounter_id: string; bed_id: string }>(
+      `SELECT id, patient_id, encounter_id, bed_id FROM admissions WHERE admission_no = 'ADM-000002'`,
+    );
+    const admission = adm.rows[0];
+    if (admission) {
+      const stayId = crypto.randomUUID();
+      await db.query(
+        `INSERT INTO icu_stays (id, facility_id, stay_no, admission_id, patient_id, encounter_id, bed_id,
+           intensivist_id, opened_by, opened_at)
+         VALUES ($1,$2,'ICU-000001',$3,$4,$5,$6,$7,$7, now() - interval '2 days')`,
+        [stayId, facilityId, admission.id, admission.patient_id, admission.encounter_id, admission.bed_id, intensivist],
+      );
+      await db.query(
+        `INSERT INTO icu_observations (id, facility_id, stay_id, recorded_at, heart_rate, systolic_bp, diastolic_bp,
+           resp_rate, spo2, temperature_c, gcs, rass, urine_ml, glucose, notes, recorded_by)
+         VALUES
+           ($1,$2,$3, now() - interval '4 hours', 88, 132, 78, 22, 94, 37.6, 15, -1, 380, 118, 'مستقر على أكسجين عالي التدفق', $4),
+           ($5,$2,$3, now() - interval '1 hour', 92, 128, 74, 24, 92, 37.8, 15, -1, 260, 126, 'زيادة بسيطة في معدل التنفس، لا ضيق واضح', $4)`,
+        [crypto.randomUUID(), facilityId, stayId, icuNurse, crypto.randomUUID()],
+      );
+      await db.query(
+        `INSERT INTO icu_ventilator_settings (id, facility_id, stay_id, mode, fio2_pct, peep_cmh2o, set_rate, reason, recorded_by, recorded_at)
+         VALUES ($1,$2,$3,'hfnc',40,5,24,'دعم تنفسي بعد تدهور تشبع الأكسجين', $4, now() - interval '2 days')`,
+        [crypto.randomUUID(), facilityId, stayId, intensivist],
+      );
+      await db.query(
+        `INSERT INTO icu_daily_goals (id, facility_id, stay_id, goal_date, sedation_target, head_of_bed_elevated,
+           vap_bundle, dvt_prophylaxis, stress_ulcer_prophylaxis, nutrition_plan, early_mobility, notes, created_by)
+         VALUES ($1,$2,$3, current_date, true, true, true, true, true, true, false,
+                 'مريض بلا تنبيب: الاستمرار على HFNC وتقييم الفطام بعد استقرار التشبع', $4)`,
+        [crypto.randomUUID(), facilityId, stayId, icuNurse],
+      );
+      const sofa = {
+        respiration: 2, coagulation: 0, liver: 0, cardiovascular: 0, cns: 0, renal: 1,
+        detail: {
+          respiration: 'PaO2/FiO2 = 225 مع دعم تنفسي', coagulation: 'الصفيحات 180 ×10³/µL',
+          liver: 'البيليروبين 0.8 mg/dL', cardiovascular: 'MAP 78', cns: 'GCS 15', renal: 'الكرياتينين 1.4 mg/dL',
+        },
+      };
+      await db.query(
+        `INSERT INTO icu_scores (id, facility_id, stay_id, kind, components, total, recorded_by, recorded_at)
+         VALUES ($1,$2,$3,'sofa',$4,3,$5, now() - interval '1 hour')`,
+        [crypto.randomUUID(), facilityId, stayId, JSON.stringify(sofa), intensivist],
+      );
+    }
+  }
+
   // Seeded documents use fixed numbers; move sequences past them so the first
   // live document cannot collide with demo data.
-  for (const name of ['appointment', 'mrn', 'encounter', 'lab_order', 'prescription', 'invoice', 'claim', 'admission', 'surgery']) {
+  for (const name of ['appointment', 'mrn', 'encounter', 'lab_order', 'prescription', 'invoice', 'claim', 'admission', 'surgery', 'icu_stay']) {
     await db.query(
       `INSERT INTO number_sequences (facility_id, name, next_value) VALUES ($1,$2,10)
        ON CONFLICT (facility_id, name) DO UPDATE SET next_value = GREATEST(number_sequences.next_value, 10)`,

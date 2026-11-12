@@ -69,6 +69,8 @@ beforeAll(async () => {
   agents.surgeon = await login('surgeon@demo.hms', 'Surgeon#Demo2026', 'surgeon');
   agents.anesthesiologist = await login('anesthesia@demo.hms', 'Anesthesia#Demo2026', 'anesthesiologist');
   agents.orNurse = await login('ornurse@demo.hms', 'Nurse#Demo2026', 'orNurse');
+  agents.intensivist = await login('intensivist@demo.hms', 'ICU#Demo2026', 'intensivist');
+  agents.icuNurse = await login('icunurse@demo.hms', 'ICU#Demo2026', 'icuNurse');
   agents.radTech = await login('radiology@demo.hms', 'Radiology#Demo2026', 'radTech');
   agents.radiologist = await login('radiologist@demo.hms', 'Radiology#Demo2026', 'radiologist');
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
@@ -352,7 +354,7 @@ describe('patient journey end-to-end', () => {
 describe('inpatient admissions and beds', () => {
   it('admits a patient with a bed, and refuses an occupied bed', async () => {
     const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
-    const free = beds.beds.find((b: any) => b.bed_status === 'available');
+    const free = beds.beds.find((b: any) => b.bed_status === 'available' && b.ward_type === 'general');
     expect(free).toBeTruthy();
     state.bedId = free.id;
     const admission = await expectStatus(
@@ -389,7 +391,7 @@ describe('inpatient admissions and beds', () => {
 
   it('denies non-clinical roles the ability to admit', async () => {
     const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
-    const another = beds.beds.find((b: any) => b.bed_status === 'available');
+    const another = beds.beds.find((b: any) => b.bed_status === 'available' && b.ward_type === 'general');
     const res = await app.inject({
       method: 'POST',
       url: '/api/inpatient/admissions',
@@ -402,7 +404,7 @@ describe('inpatient admissions and beds', () => {
 
   it('transfers the patient to another bed and frees the previous bed for cleaning', async () => {
     const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
-    const target = beds.beds.find((b: any) => b.bed_status === 'available');
+    const target = beds.beds.find((b: any) => b.bed_status === 'available' && b.ward_type === 'general');
     await expectStatus(
       await call(agents.nurse, 'POST', `/api/inpatient/admissions/${state.admissionId}/transfer`, { toBedId: target.id, reason: 'الحاجة لمراقبة أقرب' }),
       200,
@@ -552,7 +554,7 @@ describe('emergency department and triage', () => {
 
   it('transfers a critical ER patient to an inpatient bed reusing the same encounter', async () => {
     const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds');
-    const bed = beds.beds.find((b: any) => b.bed_status === 'available');
+    const bed = beds.beds.find((b: any) => b.bed_status === 'available' && b.ward_type === 'general');
     const res = await expectStatus(
       await call(agents.doctor, 'POST', `/api/emergency/visits/${state.criticalEncounterId}/disposition`, {
         decision: 'admit',
@@ -991,7 +993,7 @@ describe('nursing: medication administration, care plans and handover', () => {
     );
     expect(appointment.id).toBeTruthy();
     const beds = await expectStatus(await call(agents.doctor, 'GET', '/api/inpatient/beds'), 200, 'beds for nursing');
-    const free = beds.beds.find((b: any) => b.bed_status === 'available');
+    const free = beds.beds.find((b: any) => b.bed_status === 'available' && b.ward_type === 'general');
     expect(free).toBeTruthy();
     // Admission into the inpatient department is what gives the ward nurse a
     // documented care relationship with this patient.
@@ -1616,5 +1618,255 @@ describe('operating theatre: scheduling, WHO checklist, anaesthesia and recovery
       reason: 'محاولة إلغاء عملية مكتملة',
     });
     expect(lateCancel.statusCode).toBe(409);
+  });
+});
+
+describe('intensive care: stays, charting, ventilation, bundle and SOFA', () => {
+  it('shows the ICU board with the seeded stay and keeps reception out', async () => {
+    const board = await expectStatus(await call(agents.intensivist, 'GET', '/api/icu/board'), 200, 'icu board');
+    const stay = board.items.find((i: any) => i.stay_no === 'ICU-000001');
+    expect(stay).toBeTruthy();
+    expect(stay.mrn).toBe('MRN-0004');
+    expect(stay.ward_name).toBe('العناية المركزة');
+    expect(stay.sofa_total).toBe(3);
+    expect(stay.observation_count).toBeGreaterThanOrEqual(2);
+    expect(stay.bundled_today).toBe(true);
+    expect(board.totals.patients).toBeGreaterThanOrEqual(1);
+
+    expect((await call(agents.reception, 'GET', '/api/icu/board')).statusCode).toBe(403);
+    expect((await call(agents.nurse, 'GET', '/api/icu/board')).statusCode).toBe(403);
+  });
+
+  it('opens a stay only on an active admission occupying an ICU bed', async () => {
+    const patient = await expectStatus(
+      await call(agents.reception, 'POST', '/api/patients', {
+        fullNameAr: 'جواهر مطلق العتيبي', dateOfBirth: '1959-07-30', sex: 'female', acknowledgeDuplicate: true,
+      }),
+      201,
+      'icu patient',
+    );
+    state.icuPatientId = patient.patient.id;
+    await expectStatus(
+      await call(agents.reception, 'POST', '/api/appointments', {
+        patientId: state.icuPatientId,
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'GEN').id,
+        doctorId: agents.doctor.me.user.id,
+        scheduledAt: new Date(Date.now() + 5_400_000).toISOString(),
+      }),
+      201,
+      'icu appointment',
+    );
+
+    const beds = await expectStatus(await call(agents.intensivist, 'GET', '/api/inpatient/beds'), 200, 'beds');
+    const icuBed = beds.beds.find((b: any) => b.ward_type === 'icu' && b.bed_status === 'available');
+    expect(icuBed).toBeTruthy();
+    const generalBed = beds.beds.find((b: any) => b.ward_type === 'general' && b.bed_status === 'available');
+
+    // A general-ward admission must not be turned into an ICU stay.
+    const generalAdmission = await expectStatus(
+      await call(agents.intensivist, 'POST', '/api/inpatient/admissions', {
+        patientId: state.icuPatientId,
+        bedId: generalBed.id,
+        departmentId: bootstrap.departments.find((d: any) => d.code === 'INP').id,
+        reason: 'مراقبة عامة',
+      }),
+      201,
+      'general admission',
+    );
+    const wrongWard = await call(agents.intensivist, 'POST', '/api/icu/stays', { admissionId: generalAdmission.id });
+    expect(wrongWard.statusCode).toBe(409);
+    expect(wrongWard.json().error.message).toContain('سرير عناية مركزة');
+
+    // Move the patient into the ICU bed, then open the stay.
+    await expectStatus(
+      await call(agents.intensivist, 'POST', `/api/inpatient/admissions/${generalAdmission.id}/transfer`, {
+        toBedId: icuBed.id, reason: 'تدهور الحالة يستدعي مراقبة مركزة',
+      }),
+      200,
+      'transfer to icu',
+    );
+
+    const stay = await expectStatus(
+      await call(agents.intensivist, 'POST', '/api/icu/stays', {
+        admissionId: generalAdmission.id,
+        note: 'قبول بعد تدهور تنفسي',
+      }),
+      201,
+      'open icu stay',
+    );
+    state.icuStayId = stay.id;
+    expect(stay.stayNo).toMatch(/^ICU-\d{6}$/);
+
+    const duplicate = await call(agents.intensivist, 'POST', '/api/icu/stays', { admissionId: generalAdmission.id });
+    expect(duplicate.statusCode).toBe(409);
+
+    const nurseAttempt = await call(agents.icuNurse, 'POST', '/api/icu/stays', { admissionId: generalAdmission.id });
+    expect(nurseAttempt.statusCode).toBe(403);
+  });
+
+  it('charts observations that cannot be edited and refuses SOFA without recent vitals', async () => {
+    const staleSofa = await call(agents.intensivist, 'POST', `/api/icu/stays/${state.icuStayId}/sofa`, {
+      pao2: 80, fio2Pct: 40, respiratorySupport: true, platelets: 200, bilirubin: 0.7,
+      map: 80, gcs: 15, creatinine: 1,
+    });
+    expect(staleSofa.statusCode).toBe(409);
+    expect(staleSofa.json().error.message).toContain('علامات حيوية');
+
+    const empty = await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/observations`, {});
+    expect(empty.statusCode).toBe(409);
+
+    const badGcs = await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/observations`, { gcs: 2 });
+    expect(badGcs.statusCode).toBe(400);
+
+    const obs = await expectStatus(
+      await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/observations`, {
+        heartRate: 104, systolicBp: 95, diastolicBp: 58, respRate: 28, spo2: 89,
+        temperatureC: 38.6, gcs: 13, rass: -2, urineMl: 90, glucose: 168,
+      }),
+      201,
+      'chart observation',
+    );
+    state.icuObservationId = obs.id;
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.intensivist.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE icu_observations SET spo2 = 100 WHERE id = $1`, [obs.id]),
+      ),
+    ).rejects.toThrow(/append-only|permission denied/);
+
+    const detail = await expectStatus(
+      await call(agents.intensivist, 'GET', `/api/icu/stays/${state.icuStayId}`),
+      200,
+      'icu detail',
+    );
+    expect(detail.observations[0].heart_rate).toBe(104);
+    expect(detail.observations[0].gcs).toBe(13);
+    expect(detail.status).toBe('active');
+  });
+
+  it('records ventilation as append-only versions with the oxygen rules enforced', async () => {
+    const surgeon = await call(agents.surgeon, 'POST', `/api/icu/stays/${state.icuStayId}/ventilator`, {
+      mode: 'ac', fio2Pct: 60,
+    });
+    expect(surgeon.statusCode).toBe(403);
+
+    const wrongAir = await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/ventilator`, {
+      mode: 'room_air', fio2Pct: 50,
+    });
+    expect(wrongAir.statusCode).toBe(409);
+
+    const vent = await expectStatus(
+      await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/ventilator`, {
+        mode: 'ac', fio2Pct: 60, peepCmh2o: 8, tidalVolumeMl: 450, setRate: 18,
+        reason: 'تدهور التشبع: تنبيب وتهوية ميكانيكية',
+      }),
+      201,
+      'ventilator',
+    );
+    expect(vent.mode).toBe('ac');
+
+    await expectStatus(
+      await call(agents.intensivist, 'POST', `/api/icu/stays/${state.icuStayId}/ventilator`, {
+        mode: 'psv', fio2Pct: 40, peepCmh2o: 5, setRate: 12, reason: 'فطام تدريجي بعد تحسن التبادل الغازي',
+      }),
+      201,
+      'ventilator wean',
+    );
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.intensivist.me.activeFacilityId }, (q: any) =>
+        q.query(`UPDATE icu_ventilator_settings SET fio2_pct = 21 WHERE id = $1`, [vent.id]),
+      ),
+    ).rejects.toThrow(/append-only|permission denied/);
+
+    const detail = await expectStatus(
+      await call(agents.icuNurse, 'GET', `/api/icu/stays/${state.icuStayId}`),
+      200,
+      'vent detail',
+    );
+    expect(detail.ventilator.map((v: any) => v.mode)).toEqual(['psv', 'ac']);
+  });
+
+  it('computes SOFA from physiology and keeps the daily bundle to one row per day', async () => {
+    const sick = await expectStatus(
+      await call(agents.intensivist, 'POST', `/api/icu/stays/${state.icuStayId}/sofa`, {
+        pao2: 60, fio2Pct: 80, respiratorySupport: true, platelets: 40, bilirubin: 7,
+        map: 55, vasopressor: 'norepinephrine_low', gcs: 8, creatinine: 4.2, urine24hMl: 450,
+      }),
+      201,
+      'sofa',
+    );
+    expect(sick.total).toBe(19);
+    expect(sick.components).toEqual({
+      respiration: 4, coagulation: 3, liver: 3, cardiovascular: 3, cns: 3, renal: 3,
+    });
+
+    const mild = await expectStatus(
+      await call(agents.intensivist, 'POST', `/api/icu/stays/${state.icuStayId}/sofa`, {
+        pao2: 90, fio2Pct: 40, respiratorySupport: false, platelets: 180, bilirubin: 0.8,
+        map: 78, gcs: 15, creatinine: 1.4,
+      }),
+      201,
+      'sofa mild',
+    );
+    // PaO2 90 on FiO2 40% = ratio 225 -> 2 points; creatinine 1.4 -> 1 point.
+    expect(mild.total).toBe(3);
+    expect(mild.components.respiration).toBe(2);
+
+    const bundle = {
+      sedationTarget: true, headOfBedElevated: true, vapBundle: true, dvtProphylaxis: true,
+      stressUlcerProphylaxis: true, nutritionPlan: true, earlyMobility: false,
+    };
+    const first = await expectStatus(
+      await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/goals`, bundle),
+      200,
+      'goals',
+    );
+    expect(first.updated).toBe(false);
+    const second = await expectStatus(
+      await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/goals`, { ...bundle, earlyMobility: true }),
+      200,
+      'goals update',
+    );
+    expect(second.updated).toBe(true);
+    expect(second.id).toBe(first.id);
+
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.intensivist.me.activeFacilityId }, (q: any) =>
+        q.query(`DELETE FROM icu_daily_goals WHERE id = $1`, [first.id]),
+      ),
+    ).rejects.toThrow(/cannot be deleted|permission denied/);
+  });
+
+  it('closes a stay with a documented note and freezes the chart afterwards', async () => {
+    const shortNote = await call(agents.intensivist, 'POST', `/api/icu/stays/${state.icuStayId}/discharge`, {
+      disposition: 'ward', note: 'قصير',
+    });
+    expect(shortNote.statusCode).toBe(400);
+    expect((await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/discharge`, {
+      disposition: 'ward', note: 'إنهاء الإقامة من التمريض دون صلاحية',
+    })).statusCode).toBe(403);
+
+    const closed = await expectStatus(
+      await call(agents.intensivist, 'POST', `/api/icu/stays/${state.icuStayId}/discharge`, {
+        disposition: 'ward',
+        note: 'تحسن التبادل الغازي وفُصل عن الجهاز، نُقل إلى الجناح العام لمتابعة العلاج',
+      }),
+      200,
+      'close stay',
+    );
+    expect(closed.status).toBe('closed');
+
+    const afterClose = await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/observations`, { spo2: 97 });
+    expect(afterClose.statusCode).toBe(409);
+    const ventAfter = await call(agents.icuNurse, 'POST', `/api/icu/stays/${state.icuStayId}/ventilator`, { mode: 'room_air', fio2Pct: 21 });
+    expect(ventAfter.statusCode).toBe(409);
+    const twice = await call(agents.intensivist, 'POST', `/api/icu/stays/${state.icuStayId}/discharge`, {
+      disposition: 'home', note: 'محاولة إغلاق ثانية لنفس الإقامة',
+    });
+    expect(twice.statusCode).toBe(409);
+
+    const board = await expectStatus(await call(agents.intensivist, 'GET', '/api/icu/board'), 200, 'board after close');
+    expect(board.items.find((i: any) => i.id === state.icuStayId)).toBeFalsy();
   });
 });

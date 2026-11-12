@@ -23,6 +23,7 @@ import { reportRoutes } from './modules/reports/routes';
 import { radiologyRoutes } from './modules/radiology/routes';
 import { nursingRoutes } from './modules/nursing/routes';
 import { surgeryRoutes } from './modules/surgery/routes';
+import { icuRoutes } from './modules/icu/routes';
 import { dashboardRoutes } from './modules/dashboard/routes';
 import { adminRoutes } from './modules/admin/routes';
 import { portalRoutes } from './modules/portal/routes';
@@ -209,6 +210,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   await app.register(radiologyRoutes);
   await app.register(nursingRoutes);
   await app.register(surgeryRoutes);
+  await app.register(icuRoutes);
   await app.register(reportRoutes);
   await app.register(dashboardRoutes);
   await app.register(adminRoutes);

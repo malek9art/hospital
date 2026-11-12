@@ -16,7 +16,7 @@ export const MODULE_STATUS = [
   { key: 'nursing', ar: 'التمريض', status: 'implemented', note: 'لوحة أسرّة، سجل إعطاء أدوية (MAR) بحقوق الإعطاء الخمسة وشاهد للأدوية عالية الخطورة، خطط رعاية بمهام مجدولة، وتسليم مناوبة SBAR' },
   { key: 'radiology', ar: 'الأشعة والتقارير', status: 'partial', note: 'طلب وتنفيذ وتقرير معتمد ونتائج حرجة — لا يوجد تكامل DICOM/PACS فعلي بعد' },
   { key: 'surgery', ar: 'العمليات والتخدير', status: 'implemented', note: 'جدولة غرف العمليات بمنع التعارض، قوائم التحقق العالمية (WHO) قبل التخدير وقبل الشق وبعد العملية، سجل تخدير ملحق، عدّ الأدوات والإبر، وإفاقة ألدريتي مع رسوم العملية والتخدير' },
-  { key: 'icu', ar: 'العناية المركزة', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
+  { key: 'icu', ar: 'العناية المركزة', status: 'implemented', note: 'إقامة عناية على سرير ICU، سجل علامات حيوية وRASS/GCS ملحق، إعدادات تنفس صناعي بإصدارات، حزمة رعاية يومية، ودرجة SOFA محسوبة على الخادم' },
   { key: 'bloodbank', ar: 'بنك الدم', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
   { key: 'nutrition', ar: 'التغذية الطبية', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },
   { key: 'cssd', ar: 'التعقيم ومكافحة العدوى', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية' },

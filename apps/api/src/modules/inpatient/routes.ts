@@ -8,7 +8,9 @@ import { authorizeChartAccess, loadPatientOr404 } from '../patients/access';
 import { createAdmission, priceFor } from './service';
 import { ensureCharge } from '../billing/service';
 
-const ADMIT_ROLES = new Set(['physician', 'department_manager']);
+// Clinicians who may write an admission order. Nurses still manage beds and
+// transfers through their bed-management permission, but cannot admit by themselves.
+const ADMIT_ROLES = new Set(['physician', 'department_manager', 'intensivist', 'surgeon']);
 
 async function loadAdmission(db: any, id: string) {
   const res: any = await db.query(
