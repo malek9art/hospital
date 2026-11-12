@@ -65,6 +65,8 @@ erDiagram
 | العناية المركزة | `icu_stays`, `icu_observations`, `icu_ventilator_settings`, `icu_daily_goals`, `icu_scores` |
 | بنك الدم | `blood_donors`, `blood_units`, `blood_requests`, `blood_crossmatches`, `blood_transfusions`, `blood_reactions` |
 | التغذية الطبية | `nutrition_screenings`, `nutrition_assessments`, `nutrition_diet_orders`, `nutrition_trays`, `nutrition_tube_orders`, `nutrition_followups` |
+| التعقيم المركزي | `cssd_instrument_sets`, `cssd_sterilization_loads`, `cssd_packs` |
+| مكافحة العدوى | `infection_isolations`, `infection_cases`, `hand_hygiene_audits` |
 | عرض للمريض | `portal_clinicians` (VIEW) |
 
 ## قيود سلامة مهمة
@@ -92,6 +94,10 @@ erDiagram
 | `blood_requests` لا يُصدَر إلا بعد حجز وحدة متوافقة (فحص في الـAPI) وفهرس طلب مفتوح لكل مريض | تسلسل آمن ومنع الطلبات المتعارضة |
 | `nutrition_screenings` / `nutrition_assessments` / `nutrition_followups` ملحق فقط، وأمر التغذية لا يُعدّل بعد إصداقه ويُوقف فقط (`nutrition_diet_order_guard`) | سلامة القرار الغذائي |
 | `nutrition_one_active_diet` (أمر نشط واحد لكل تنويم) و`nutrition_one_active_tube_per_route` | منع أوامر متعارضة |
+| `cssd_pack_guard` مصفوفة انتقالات صارمة (dirty→washing→packed→sterilizing→released→issued→used→returned→dirty بدورة +1، والحجز/السحب حالات سلامة)، ومنع حذف الحزم أو تغيير هويتها أو عدّادها خارج إعادة الاستلام؛ `cssd_pack_open_cycle` نسخة قائمة واحدة لكل طقم | سلامة دورة التعقيم وتتبع الحزمة |
+| `cssd_load_guard` الدورة المكتملة/المعتمدة غير قابلة للتعديل إلا حقول السحب، ومنع إعادة تشغيل دورة منتهية، و`CHECK (approved_by <> operator_id)` مع تحقق إضافي في الـAPI | فصل مهام الاعتماد |
+| `infection_isolation_guard` أمر العزل لا يُحذف، ولا يُغلق إلا بسبب، والمغلق غير قابل للتعديل؛ فهرس فريد لعزل نشط واحد لكل مريض | سلامة قرار العزل |
+| `infection_case_guard` الحالة تُراجع مرة واحدة `suspected→confirmed/excluded` مع مراجع وملاحظة، ثم تُجمّد؛ `hand_hygiene_guard` يمنع أي تعديل/حذف للملاحظات | دقة الترصد ودليل التدقيق |
 | `nutrition_trays` انتقالات حالة صارمة (ordered→prepared→delivered→consumed/refused) والصينية المقفلة لا تُعدّل | سلامة دورة الوجبة ووقت الاستهلاك |
 | `hash_version` على `audit_log` | تطور خوارزمية السلسلة دون إبطال صامت |
 
@@ -101,5 +107,6 @@ erDiagram
 - **LOINC**: `lab_tests.code` يحمل رموز LOINC (مجموعة تجريبية صغيرة: 718-7، 6690-2، 2345-7، 2160-0، 4548-4).
 - **FHIR R4**: واجهة قراءة جزئية (Patient/Observation) وليست تنفيذًا معتمدًا.
 - **SNOMED CT / DICOM**: غير مستخدمة/غير منفذة (تتطلب ترخيصًا/تكاملًا).
+- **التعقيم ومكافحة العدوى**: `precaution`, `case_type`, `moment`, `category`, `method`, `packaging`, `status` قيم CHECK ثابتة وليست مفردات SNOMED/LOINC؛ لا توجد جداول أجهزة تعقيم أو تتبع أدوات فردية (الأداة تُوصف بالعدد داخل الطقم)؛ الصلاحية تُحسب من مدة افتراضية موثقة في الـAPI.
 - **التغذية**: لا تستخدم مفردات SNOMED/NCPT؛ غذاء وتقييدات حقول CHECK ثابتة، وحساب الأهداف تقديري حسب الوزن.
 - **بنك الدم**: لا يستخدم ترميز ISBT 128 ولا مفردات فصائل معقدة؛ الحقول `component` و`blood_type` مجموعات محددة بقيد CHECK، وقرار التوافق من جدول ABO/Rh ثابت في `modules/bloodbank/routes.ts` (بلا أجسام مضادة أو معايرة عيار).

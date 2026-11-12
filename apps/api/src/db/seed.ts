@@ -75,6 +75,17 @@ const PERMISSIONS: [string, string, string][] = [
   ['nutrition.kitchen', 'nutrition', 'تحضير وتسليم صواني الوجبات'],
   ['nutrition.intake', 'nutrition', 'تسجيل ما تناوله المريض'],
   ['nutrition.tube', 'nutrition', 'أوامر التغذية الأنبوبية والوريدية وإيقافها'],
+  ['cssd.read', 'cssd', 'عرض لوحة التعقيم والأطقم والحزم'],
+  ['cssd.manage', 'cssd', 'تعريف الأطقم واستلام الحزم الملوّثة'],
+  ['cssd.reprocess', 'cssd', 'الغسل والتغليف وتجهيز دورات التعقيم'],
+  ['cssd.sterilize', 'cssd', 'تسجيل نتيجة دورة التعقيم والمؤشرات'],
+  ['cssd.release', 'cssd', 'اعتماد الدورة والإفراج عن الحزم (شخص مختلف عن المنفذ)'],
+  ['cssd.issue', 'cssd', 'صرف الحزم المعقمة وربطها بالعمليات وسحبها'],
+  ['infection.read', 'infection', 'عرض لوحة مكافحة العدوى وأوامر العزل'],
+  ['infection.isolate', 'infection', 'إصدار أوامر العزل وإنهاؤها'],
+  ['infection.surveillance', 'infection', 'تسجيل حالات الاشتباه بالعدوى المرتبطة بالرعاية'],
+  ['infection.confirm', 'infection', 'مراجعة واعتماد أو استبعاد حالات العدوى (شخص مختلف عن المسجل)'],
+  ['infection.audit', 'infection', 'تدقيق نظافة الأيدي'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -92,17 +103,19 @@ const ALL = PERMISSIONS.map((p) => p[0]);
 const ROLE_PERMS: Record<string, string[]> = {
   system_admin: ['admin.users.read', 'admin.users.manage', 'admin.roles.manage', 'admin.facility.manage', 'admin.sessions.manage', 'admin.settings.manage', 'audit.read', 'report.read'],
   hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read'],
-  surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read'],
-  anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read'],
-  or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read'],
+  surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read', 'cssd.read', 'cssd.issue'],
+  anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read', 'cssd.read'],
+  or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read', 'cssd.read', 'cssd.issue'],
   intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake'],
-  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake'],
+  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake', 'infection.read', 'cssd.read'],
   dietitian: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'nutrition.read', 'nutrition.assess', 'nutrition.order', 'nutrition.tube', 'report.read'],
   kitchen_staff: ['patient.read', 'patient.chart.administrative', 'nutrition.kitchen'],
+  cssd_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'cssd.read', 'cssd.manage', 'cssd.reprocess', 'cssd.sterilize', 'cssd.release', 'cssd.issue', 'report.read'],
+  infection_control: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.confirm', 'infection.audit', 'cssd.read', 'report.read', 'report.export'],
   blood_bank_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'bloodbank.read', 'bloodbank.crossmatch', 'bloodbank.issue', 'bloodbank.stock', 'bloodbank.reaction', 'report.read'],
   department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction'],
   physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request'],
-  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.screen', 'nutrition.intake'],
+  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.screen', 'nutrition.intake', 'cssd.read', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.audit'],
   receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record'],
   records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export'],
   lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read'],
@@ -128,6 +141,8 @@ const ROLES: [string, string, string][] = [
   ['blood_bank_tech', 'فني بنك دم', 'Blood bank technologist'],
   ['dietitian', 'أخصائي تغذية', 'Clinical dietitian'],
   ['kitchen_staff', 'موظف تغذية', 'Nutrition services'],
+  ['cssd_tech', 'فني تعقيم', 'CSSD technician'],
+  ['infection_control', 'مكافحة العدوى', 'Infection prevention & control'],
   ['receptionist', 'استقبال', 'Receptionist'],
   ['records_officer', 'السجلات الطبية', 'Medical records'],
   ['lab_tech', 'فني مختبر', 'Lab technician'],
@@ -207,6 +222,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     blood: await hashPassword('Blood#Demo2026'),
     nutrition: await hashPassword('Nutrition#Demo2026'),
     kitchen: await hashPassword('Kitchen#Demo2026'),
+    cssd: await hashPassword('CSSD#Demo2026'),
+    infection: await hashPassword('Infection#Demo2026'),
     reception: await hashPassword('Reception#Demo2026'),
     records: await hashPassword('Records#Demo2026'),
     lab: await hashPassword('Lab#Demo2026'),
@@ -232,6 +249,9 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['bloodbank@demo.hms', 'نورة الحربي', 'Noura Alharbi', 'فنية بنك دم', 'blood_bank_tech', password.blood, 'LAB'],
     ['dietitian@demo.hms', 'هيفاء الزهراني', 'Haifa Alzahrani', 'أخصائية تغذية علاجية', 'dietitian', password.nutrition, 'INP'],
     ['kitchen@demo.hms', 'ماجد الشهري', 'Majed Alshehri', 'مسؤول خدمات التغذية', 'kitchen_staff', password.kitchen, 'INP'],
+    ['cssd@demo.hms', 'عمر باوزير', 'Omar Bawazir', 'فني تعقيم مركزي', 'cssd_tech', password.cssd, 'OR'],
+    ['cssd2@demo.hms', 'خديجة عسيري', 'Khadija Asiri', 'مشرفة التعقيم المركزي', 'cssd_tech', password.cssd, 'OR'],
+    ['infection@demo.hms', 'د. رقية الأنصاري', 'Dr. Ruqaya Alansari', 'استشارية مكافحة العدوى', 'infection_control', password.infection, 'INP'],
     ['reception@demo.hms', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', 'receptionist', password.reception, 'ADM'],
     ['records@demo.hms', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', 'records_officer', password.records, 'ADM'],
     ['lab@demo.hms', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', 'lab_tech', password.lab, 'LAB'],
@@ -878,6 +898,172 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     }
   }
 
+  // ------------------------------------------------------- CSSD / infection --
+  // A realistic sterile-services day: two packs from an approved load (one is
+  // already issued to the booked cholecystectomy), a running cycle, a failed
+  // cycle whose pack is quarantined, packs mid-reprocessing and one returned
+  // pack. Infection control has an active isolation, surveillance cases in all
+  // three states and a month of hand-hygiene observations.
+  {
+    const tech = userIds['cssd_tech:cssd@demo.hms'];
+    const supervisor = userIds['cssd_tech:cssd2@demo.hms'];
+    const ipc = userIds['infection_control:infection@demo.hms'];
+
+    const setDefs: [string, string, string, number, string][] = [
+      ['CSS-SET-01', 'طقم جراحة عامة أساسي', 'laparotomy', 42, 'OR'],
+      ['CSS-SET-02', 'طقم استئصال مرارة بالمنظار', 'laparotomy', 28, 'OR'],
+      ['CSS-SET-03', 'طقم جراحة عظام صغرى', 'orthopedic', 55, 'OR'],
+      ['CSS-SET-04', 'طقم تضميد جروح', 'dressing', 12, 'INP'],
+      ['CSS-SET-05', 'طقم ولادة', 'other', 24, 'OR'],
+      ['CSS-SET-06', 'طقم جراحة عامة احتياطي', 'laparotomy', 40, 'OR'],
+      ['CSS-SET-07', 'طقم قسطرة قلبية', 'endoscopy', 18, 'OR'],
+    ];
+    const setIds: Record<string, string> = {};
+    for (const [code, nameAr, category, count, dept] of setDefs) {
+      const id = crypto.randomUUID();
+      setIds[code] = id;
+      await db.query(
+        `INSERT INTO cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [id, facilityId, code, nameAr, category, count, dept, supervisor],
+      );
+    }
+
+    const loadDefs: {
+      id: string; no: string; autoclave: string; cycle: number; packs: number;
+      status: string; chemical: string; biological: string; agoHours: number; approved?: boolean;
+    }[] = [
+      { id: crypto.randomUUID(), no: 'CSL-000001', autoclave: 'STM-01', cycle: 5, packs: 2, status: 'approved',
+        chemical: 'pass', biological: 'pass', agoHours: 52, approved: true },
+      { id: crypto.randomUUID(), no: 'CSL-000002', autoclave: 'STM-02', cycle: 12, packs: 1, status: 'running',
+        chemical: 'pass', biological: 'pending', agoHours: 2 },
+      { id: crypto.randomUUID(), no: 'CSL-000003', autoclave: 'STM-01', cycle: 6, packs: 1, status: 'failed',
+        chemical: 'pass', biological: 'fail', agoHours: 26 },
+    ];
+    for (const l of loadDefs) {
+      await db.query(
+        `INSERT INTO cssd_sterilization_loads (id, facility_id, load_no, autoclave_code, method, cycle_no,
+           temperature_c, pressure_bar, duration_min, pack_count, status, chemical_indicator, biological_indicator,
+           result_notes, operator_id, started_at, resulted_at, approved_by, approved_at)
+         VALUES ($1,$2,$3,$4,'steam',$5,134,2.1,18,$6,$7,$8,$9,$10,$11,
+                 now() - make_interval(hours => $12::int),
+                 $13, $14, $15)`,
+        [l.id, facilityId, l.no, l.autoclave, l.cycle, l.packs, l.status, l.chemical, l.biological,
+          l.status === 'failed' ? 'فشل المؤشر البيولوجي في عينة اليوم، أُعيدت الدورة بعد صيانة المصيدة' : null,
+          tech, l.agoHours, l.status === 'running' ? null : new Date(Date.now() - (l.agoHours - 1) * 3600_000).toISOString(),
+          l.approved ? supervisor : null,
+          l.approved ? new Date(Date.now() - (l.agoHours - 2) * 3600_000).toISOString() : null],
+      );
+    }
+    const [load1, load2, load3] = loadDefs.map((l) => l.id);
+
+    const surgical = await db.query<{ id: string }>(`SELECT id FROM surgical_cases WHERE case_no = 'SUR-000001'`);
+    const caseId = surgical.rows[0]?.id ?? null;
+
+    type Pack = {
+      no: string; set: string; status: string; packaging: string; cycle: number; load?: string;
+      expiresDays?: number; releasedHours?: number; caseLinked?: boolean; usedHours?: number; returnedHours?: number;
+    };
+    const packDefs: Pack[] = [
+      { no: 'CSS-000001', set: 'CSS-SET-02', status: 'issued', packaging: 'container', cycle: 3, load: load1,
+        expiresDays: 28, releasedHours: 50, caseLinked: true },
+      { no: 'CSS-000002', set: 'CSS-SET-01', status: 'released', packaging: 'wrap', cycle: 2, load: load1,
+        expiresDays: 27, releasedHours: 50 },
+      { no: 'CSS-000003', set: 'CSS-SET-03', status: 'sterilizing', packaging: 'container', cycle: 4, load: load2 },
+      { no: 'CSS-000004', set: 'CSS-SET-04', status: 'washing', packaging: 'wrap', cycle: 1 },
+      { no: 'CSS-000005', set: 'CSS-SET-05', status: 'dirty', packaging: 'wrap', cycle: 2 },
+      { no: 'CSS-000006', set: 'CSS-SET-06', status: 'used', packaging: 'container', cycle: 7,
+        usedHours: 20, releasedHours: 90 },
+      { no: 'CSS-000007', set: 'CSS-SET-07', status: 'quarantined', packaging: 'wrap', cycle: 1, load: load3 },
+    ];
+    for (const pk of packDefs) {
+      const id = crypto.randomUUID();
+      const released = pk.releasedHours != null ? new Date(Date.now() - pk.releasedHours * 3600_000).toISOString() : null;
+      await db.query(
+        `INSERT INTO cssd_packs (id, facility_id, pack_no, set_id, load_id, status, packaging, cycle_count,
+           washed_by, washed_at, packed_by, packed_at, released_at, expires_at, issued_to, issued_to_case_id,
+           issued_by, issued_at, used_at, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,
+                 CASE WHEN $6 IN ('washing') THEN NULL ELSE now() - interval '3 hours' END, $9::uuid,
+                 CASE WHEN $6 IN ('dirty','washing') THEN NULL ELSE now() - interval '2 hours' END,
+                 $10,
+                 CASE WHEN $11::int IS NULL THEN NULL ELSE now() + make_interval(days => $11::int) END,
+                 CASE WHEN $6 = 'issued' THEN 'غرفة العمليات 1' ELSE NULL END,
+                 $12::uuid,
+                 CASE WHEN $6 = 'issued' THEN $13::uuid ELSE NULL END,
+                 CASE WHEN $6 = 'issued' THEN now() - interval '90 minutes' ELSE NULL END,
+                 CASE WHEN $14::int IS NULL THEN NULL ELSE now() - make_interval(hours => $14::int) END,
+                 $15)`,
+        [id, facilityId, pk.no, setIds[pk.set], pk.load ?? null, pk.status, pk.packaging, pk.cycle, tech,
+          released ? new Date(Date.now() - (pk.releasedHours! - 1) * 3600_000).toISOString() : null,
+          pk.expiresDays ?? null, pk.caseLinked ? caseId : null, pk.caseLinked ? supervisor : null,
+          pk.usedHours ?? null,
+          pk.status === 'quarantined' ? 'حجز احترازي بعد فشل المؤشر البيولوجي للدورة CSL-000003' : null],
+      );
+    }
+
+    const adm = await db.query<{ id: string; patient_id: string }>(
+      `SELECT id, patient_id FROM admissions WHERE admission_no = 'ADM-000002'`,
+    );
+    const icuAdmission = adm.rows[0];
+    if (icuAdmission) {
+      await db.query(
+        `INSERT INTO infection_isolations (id, facility_id, patient_id, admission_id, precaution, organism, reason,
+           started_at, ordered_by)
+         VALUES ($1,$2,$3,$4,'contact','Clostridioides difficile (مشتبه)',
+                 'إسهال مائي منذ ٢٤ ساعة بعد مضادات حيوية واسعة الطيف، عينة toxin قيد الفحص', now() - interval '20 hours', $5)`,
+        [crypto.randomUUID(), facilityId, icuAdmission.patient_id, icuAdmission.id, ipc],
+      );
+      await db.query(
+        `INSERT INTO infection_isolations (id, facility_id, patient_id, admission_id, precaution, organism, reason,
+           started_at, ordered_by, ended_at, ended_by, end_reason)
+         VALUES ($1,$2,$3,$4,'droplet','MRSA',
+                 'نتيجة مسحة أنفية إيجابية عند الدخول، مع جروح مفتوحة', now() - interval '12 days', $5,
+                 now() - interval '9 days', $5, 'تكررت المسحة سلبياً مرتين متتاليتين وأُوقف العزل حسب السياسة')`,
+        [crypto.randomUUID(), facilityId, icuAdmission.patient_id, icuAdmission.id, ipc],
+      );
+
+      const caseDefs: [string, string, string, string][] = [
+        ['clabsi', 'Staphylococcus epidermidis', 'عينة من القسطرة المركزية موجبة بعد ٩ أيام من الإدخال', 'suspected'],
+        ['cauti', 'Escherichia coli', 'زرع بول موجب مع أعراض بيلة وحمى بعد قسطرة بولية', 'confirmed'],
+        ['vap', '', 'تحسن بعد ٤٨ ساعة من إيقاف المضاد الحيوي؛ لا دليل على التهاب رئوي', 'excluded'],
+      ];
+      let onsetOffset = 6;
+      for (const [caseType, organism, note, status] of caseDefs) {
+        const reportedAt = new Date(Date.now() - onsetOffset * 86_400_000).toISOString();
+        await db.query(
+          `INSERT INTO infection_cases (id, facility_id, patient_id, admission_id, case_type, organism, onset_date,
+             device_days, status, reported_by, reported_at, reviewed_by, reviewed_at, review_note)
+           VALUES ($1,$2,$3,$4,$5,$6, current_date - $7::int, 9, $8, $9, $10, $11, $12, $13)`,
+          [crypto.randomUUID(), facilityId, icuAdmission.patient_id, icuAdmission.id, caseType,
+            organism || null, onsetOffset, status, userIds['nurse:nurse@demo.hms'], reportedAt,
+            status === 'suspected' ? null : ipc,
+            status === 'suspected' ? null : new Date(Date.now() - (onsetOffset - 2) * 86_400_000).toISOString(),
+            status === 'suspected' ? null : note],
+        );
+        onsetOffset += 5;
+      }
+
+      const units: [string, string][] = [['العناية المركزة', 'ICU'], ['الباطنة', 'INP'], ['الطوارئ', 'ER']];
+      let day = 1;
+      for (const [unit] of units) {
+        for (let i = 0; i < 8; i++) {
+          const opportunities = 20;
+          const compliant = [17, 18, 16, 19, 15, 18, 20, 17][(i + day) % 8];
+          await db.query(
+            `INSERT INTO hand_hygiene_audits (id, facility_id, unit, moment, opportunities, compliant,
+               observed_role, observed_date, observer_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7, current_date - $8::int, $9)`,
+            [crypto.randomUUID(), facilityId, unit,
+              ['before_patient', 'before_aseptic', 'after_body_fluid', 'after_patient', 'after_surroundings'][i % 5],
+              opportunities, compliant, ['nurse', 'physician', 'tech'][i % 3], day, ipc],
+          );
+          day += 1;
+        }
+      }
+    }
+  }
+
   // Seeded documents use fixed numbers, so move each sequence past the highest
   // demo number. The floor is derived from the seeded rows rather than a magic
   // constant: a fixed floor broke silently once a module seeded more records
@@ -901,6 +1087,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['blood_request', 'blood_requests', 'request_no', 'BLR'],
     ['nutrition_order', 'nutrition_diet_orders', 'order_no', 'NUT'],
     ['nutrition_tray', 'nutrition_trays', 'tray_no', 'TRY'],
+    ['cssd_pack', 'cssd_packs', 'pack_no', 'CSS'],
+    ['cssd_load', 'cssd_sterilization_loads', 'load_no', 'CSL'],
   ];
   for (const [name, table, column, prefix] of sequenceSources) {
     const max = await db.query<{ next: number }>(

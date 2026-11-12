@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, login, me, resetCsrf, has, setUnauthorizedHandler, type Me } from './api';
 
-type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'icu' | 'bloodbank' | 'nutrition' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
+type PageKey = 'dashboard' | 'patients' | 'appointments' | 'clinic' | 'emergency' | 'inpatient' | 'nursing' | 'surgery' | 'icu' | 'bloodbank' | 'nutrition' | 'cssd' | 'lab' | 'radiology' | 'pharmacy' | 'billing' | 'reports' | 'audit' | 'modules' | 'portal';
 
 const money = (v: number | string | null | undefined) =>
   new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 2 }).format(Number(v ?? 0));
@@ -15,12 +15,18 @@ const STATUS: Record<string, string> = {
   prepared: 'محضّرة', delivered: 'مُسلَّمة', consumed: 'مستهلكة', refused: 'مرفوضة', stopped: 'متوقفة',
   available: 'متاحة', reserved: 'محجوزة', transfused: 'مُنقلة', discarded: 'مستبعدة',
   pending: 'قيد الانتظار', crossmatched: 'مطابقة', stopped_reaction: 'أُوقف لتفاعل', stopped_other: 'أُوقف لسبب آخر',
+  dirty: 'ملوّثة', washing: 'قيد الغسل', packed: 'مغلّفة', sterilizing: 'قيد التعقيم', released: 'معقّمة',
+  used: 'مستخدمة', returned: 'مُعادة', quarantined: 'محجوزة احترازيًا', recalled: 'مسحوبة',
+  running: 'جارية', passed: 'ناجحة', failed: 'فاشلة', approved: 'معتمدة',
+  suspected: 'مشتبهة', confirmed: 'مؤكدة', excluded: 'مستبعدة',
 };
 
 function Badge({ value }: { value: string }) {
   const color = ['paid', 'verified', 'completed', 'dispensed', 'closed'].includes(value) ? 'bg-emerald-100 text-emerald-700'
     : ['cancelled', 'void', 'no_show'].includes(value) ? 'bg-rose-100 text-rose-700'
-    : ['critical_high', 'critical_low', 'failed'].includes(value) ? 'bg-rose-100 text-rose-700'
+    : ['critical_high', 'critical_low', 'failed', 'quarantined', 'recalled'].includes(value) ? 'bg-rose-100 text-rose-700'
+    : ['released', 'approved', 'passed', 'confirmed'].includes(value) ? 'bg-emerald-100 text-emerald-700'
+    : ['suspected', 'sterilizing', 'packed', 'washing'].includes(value) ? 'bg-amber-100 text-amber-700'
     : value === 'ordered' || value === 'issued' || value === 'open' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700';
   return <span className={`badge ${color}`}>{STATUS[value] ?? value}</span>;
 }
@@ -2292,6 +2298,385 @@ function Portal() {
   );
 }
 
+// ------------------------------------------------------- CSSD & infection ---
+function CSSD({ m }: { m: Me }) {
+  const [tab, setTab] = useState<'cssd' | 'ipc'>('cssd');
+  const [board, setBoard] = useState<any>(null);
+  const [ipc, setIpc] = useState<any>(null);
+  const [patients, setPatients] = useState<any[]>([]);
+  const [cases, setCases] = useState<any[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [setForm, setSetForm] = useState({ code: '', nameAr: '', category: 'laparotomy', instrumentCount: '20', department: 'OR' });
+  const [recv, setRecv] = useState({ setId: '', packaging: 'wrap' });
+  const [loadForm, setLoadForm] = useState({ autoclaveCode: 'STM-01', method: 'steam', packIds: [] as string[] });
+  const [issue, setIssue] = useState({ packId: '', issuedTo: 'غرفة العمليات 1', caseId: '' });
+  const [iso, setIso] = useState({ patientId: '', precaution: 'contact', organism: '', reason: '' });
+  const [hai, setHai] = useState({
+    patientId: '', caseType: 'cauti', organism: '', deviceDays: '', notes: '',
+    onsetDate: new Date().toISOString().slice(0, 10),
+  });
+  const [hyg, setHyg] = useState({ unit: 'العناية المركزة', moment: 'before_patient', opportunities: '20', compliant: '18', observedRole: 'nurse', notes: '' });
+  const can = (p: string) => has(m, p);
+
+  async function load() {
+    try {
+      if (can('cssd.read')) setBoard(await api<any>('/api/cssd/board'));
+    } catch (e: any) { setErr(e.message); }
+    try {
+      if (can('infection.read')) setIpc(await api<any>('/api/infection/board'));
+    } catch (e: any) { /* a role may hold only one of the two boards */ }
+    try {
+      if (can('patient.read')) {
+        const list = await api<any>('/api/patients?limit=50');
+        setPatients(list.items ?? []);
+      }
+    } catch { /* patient lookup is optional */ }
+    try {
+      if (can('surgery.read')) {
+        const b = await api<any>('/api/surgery/board?status=active');
+        setCases(b.items ?? []);
+      }
+    } catch { /* case linking is optional */ }
+  }
+  useEffect(() => { load(); }, []);
+  async function act(fn: () => Promise<any>, msg: string) {
+    setErr(null); setOk(null);
+    try { await fn(); setOk(msg); await load(); } catch (e: any) { setErr(e.message); }
+  }
+
+  const packs: any[] = board?.packs ?? [];
+  const loads: any[] = board?.loads ?? [];
+  const sets: any[] = board?.sets ?? [];
+  const releasedPacks = packs.filter((p) => p.status === 'released' && !p.expired);
+  const packedPacks = packs.filter((p) => p.status === 'packed');
+
+  return (
+    <div className="space-y-4">
+      <Msg text={err} /><Msg text={ok} kind="ok" />
+      <div className="flex gap-2">
+        {can('cssd.read') && <button className={tab === 'cssd' ? 'btn-primary text-xs' : 'btn-ghost text-xs'} onClick={() => setTab('cssd')}>التعقيم المركزي (CSSD)</button>}
+        {can('infection.read') && <button className={tab === 'ipc' ? 'btn-primary text-xs' : 'btn-ghost text-xs'} onClick={() => setTab('ipc')}>مكافحة العدوى</button>}
+      </div>
+
+      {tab === 'cssd' && <>
+        {board && <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+          {[['قيد المعالجة', board.totals.in_process], ['قيد التعقيم', board.totals.sterilizing], ['جاهزة', board.totals.released],
+            ['مصروفة', board.totals.issued], ['محجوزة', board.totals.quarantined], ['منتهية الصلاحية', board.totals.expired]].map(([l, v]) => (
+            <div key={String(l)} className="card p-3"><p className="text-xs text-slate-500">{l}</p><p className="text-xl font-bold">{v as any}</p></div>
+          ))}
+        </div>}
+
+        {board && <Card title="حزم الأدوات ودورة التعقيم">
+          <div className="overflow-x-auto"><table className="w-full min-w-[1100px]"><thead><tr>
+            <th className="th">الحزمة</th><th className="th">الطقم</th><th className="th">الحالة</th><th className="th">الدورة</th>
+            <th className="th">الصلاحية</th><th className="th">الجهة / العملية</th><th className="th"></th>
+          </tr></thead><tbody>
+            {packs.map((p: any) => <tr key={p.id} className={p.status === 'quarantined' || p.status === 'recalled' ? 'bg-rose-50/60' : p.expired ? 'bg-amber-50/60' : ''}>
+              <td className="td text-xs font-mono">{p.pack_no}<span className="block text-slate-400">دورة الإنتاج #{p.cycle_count}</span></td>
+              <td className="td text-xs">{p.set_name}<span className="block text-slate-400">{p.set_code} · {p.instrument_count} أداة · {p.packaging === 'container' ? 'حاوية' : 'تغليف ورقي'}</span></td>
+              <td className="td text-xs"><Badge value={p.status} />{p.status_ar && <span className="block text-slate-400">{p.status_ar}</span>}</td>
+              <td className="td text-xs">{p.load_no ? <>{p.load_no}<span className="block text-slate-400">{p.autoclave_code} · {p.method_ar ?? p.method} · مؤشر {p.biological_indicator === 'pass' ? 'سليم' : p.biological_indicator === 'fail' ? 'فاشل' : 'قيد الحضانة'}</span></> : '—'}</td>
+              <td className="td text-xs">{p.expires_at ? <>{day(p.expires_at)}{p.expired ? <span className="block text-rose-700">منتهية</span> : <span className="block text-slate-400">متبقٍ {p.days_left} يوم</span>}</> : '—'}</td>
+              <td className="td text-xs">{p.issued_to ?? '—'}{p.case_no && <span className="block text-slate-400">{p.case_no}</span>}{p.recall_reason && <span className="block text-rose-700">{p.recall_reason}</span>}</td>
+              <td className="td"><div className="flex flex-wrap gap-1">
+                {can('cssd.reprocess') && p.status === 'dirty' && <button className="btn-ghost text-xs" onClick={() => act(() => api(`/api/cssd/packs/${p.id}/wash`, { method: 'POST' }), 'سُجّل الغسل')}>غسل</button>}
+                {can('cssd.reprocess') && p.status === 'washing' && <button className="btn-ghost text-xs" onClick={() => act(() => api(`/api/cssd/packs/${p.id}/pack`, { method: 'POST' }), 'غُلّفت الحزمة')}>تغليف</button>}
+                {can('cssd.issue') && p.status === 'released' && !p.expired && <button className="btn-ghost text-xs" onClick={() => setIssue({ ...issue, packId: p.id })}>تجهيز الصرف</button>}
+                {can('cssd.issue') && p.status === 'issued' && <button className="btn-primary text-xs" onClick={() => act(() => api(`/api/cssd/packs/${p.id}/use`, { method: 'POST' }), 'سُجّل استخدام الحزمة')}>تسجيل الاستخدام</button>}
+                {can('cssd.reprocess') && ['issued', 'used'].includes(p.status) && <button className="btn-ghost text-xs" onClick={() => act(() => api(`/api/cssd/packs/${p.id}/return`, { method: 'POST' }), 'أُعيدت الحزمة للتعقيم')}>استرجاع</button>}
+              </div></td>
+            </tr>)}
+            {packs.length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا حزم مسجلة.</td></tr>}
+          </tbody></table></div>
+          <p className="text-[11px] text-slate-500 mt-2">
+            الصلاحية الافتراضية بعد الإفراج: تغليف ورقي ٣٠ يومًا وحاوية ٩٠ يومًا (سياسة موثقة وليست قراءة آلية من جهاز).
+            فشل أي مؤشر يحجز كل حزم الدورة، ولا يجوز صرف حزمة قبل اعتماد الدورة من شخص آخر.
+          </p>
+        </Card>}
+
+        {board && <Card title="دورات التعقيم">
+          <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr>
+            <th className="th">الدورة</th><th className="th">الجهاز</th><th className="th">المؤشرات</th><th className="th">المشغّل / المعتمد</th><th className="th">الحالة</th><th className="th"></th>
+          </tr></thead><tbody>
+            {loads.map((l: any) => <tr key={l.id} className={l.status === 'failed' ? 'bg-rose-50/60' : ''}>
+              <td className="td text-xs font-mono">{l.load_no}<span className="block text-slate-400">دورة {l.cycle_no} · {l.pack_count} حزمة</span></td>
+              <td className="td text-xs">{l.autoclave_code}<span className="block text-slate-400">{l.method_ar ?? l.method} · {l.temperature_c ? `${Number(l.temperature_c)}°` : '—'} · {l.duration_min ? `${l.duration_min} د` : '—'}</span></td>
+              <td className="td text-xs">كيميائي: {l.chemical_indicator === 'pass' ? 'سليم' : l.chemical_indicator === 'fail' ? 'فاشل' : '—'}<span className="block text-slate-400">بيولوجي: {l.biological_indicator === 'pass' ? 'سليم' : l.biological_indicator === 'fail' ? 'فاشل' : 'قيد الحضانة'}</span></td>
+              <td className="td text-xs">{l.operator_name}<span className="block text-slate-400">{l.approver_name ? `اعتمدها ${l.approver_name}` : 'بانتظار اعتماد شخص آخر'}</span></td>
+              <td className="td text-xs"><Badge value={l.status} />{l.recalled_at && <span className="block text-rose-700">مسحوبة</span>}</td>
+              <td className="td"><div className="flex flex-wrap gap-1">
+                {can('cssd.sterilize') && l.status === 'running' && <>
+                  <button className="btn-primary text-xs" onClick={() => act(() => api(`/api/cssd/loads/${l.id}/result`, { method: 'POST', body: JSON.stringify({ chemicalIndicator: 'pass', biologicalIndicator: 'pass' }) }), 'سُجّلت نتيجة ناجحة؛ يلزم اعتماد شخص آخر')}>نتيجة ناجحة</button>
+                  <button className="btn-ghost text-xs" onClick={() => act(() => api(`/api/cssd/loads/${l.id}/result`, { method: 'POST', body: JSON.stringify({ chemicalIndicator: 'pass', biologicalIndicator: 'fail', notes: 'فشل المؤشر البيولوجي' }) }), 'سُجّل فشل الدورة وحُجزت حزمها')}>نتيجة فاشلة</button>
+                </>}
+                {can('cssd.release') && l.status === 'passed' && <button className="btn-primary text-xs" onClick={() => act(() => api(`/api/cssd/loads/${l.id}/approve`, { method: 'POST' }), 'اعتُمدت الدورة وأُفرج عن حزمها')}>اعتماد</button>}
+                {can('cssd.release') && !l.recalled_at && l.status !== 'running' && <button className="btn-ghost text-xs text-rose-700" onClick={() => {
+                  const reason = window.prompt('سبب سحب الدورة (٥ أحرف على الأقل):') ?? '';
+                  if (reason.trim().length >= 5) act(() => api(`/api/cssd/loads/${l.id}/recall`, { method: 'POST', body: JSON.stringify({ reason }) }), 'سُحبت الدورة وأُبلغ عن الحالات المتأثرة');
+                }}>سحب</button>}
+              </div></td>
+            </tr>)}
+            {loads.length === 0 && <tr><td className="td text-slate-500" colSpan={6}>لا دورات مسجلة.</td></tr>}
+          </tbody></table></div>
+        </Card>}
+
+        <div className="grid lg:grid-cols-3 gap-3">
+          {can('cssd.manage') && <Card title="تعريف طقم أدوات">
+            <div className="space-y-2">
+              <input className="input" placeholder="رمز الطقم (مثال CSS-SET-30)" value={setForm.code} onChange={(e) => setSetForm({ ...setForm, code: e.target.value })} />
+              <input className="input" placeholder="اسم الطقم" value={setForm.nameAr} onChange={(e) => setSetForm({ ...setForm, nameAr: e.target.value })} />
+              <div className="flex gap-2">
+                <select className="input" value={setForm.category} onChange={(e) => setSetForm({ ...setForm, category: e.target.value })}>
+                  <option value="minor">جراحة صغرى</option><option value="laparotomy">فتح بطن</option><option value="orthopedic">عظام</option>
+                  <option value="dressing">ضمادات</option><option value="endoscopy">مناظير</option><option value="other">أخرى</option>
+                </select>
+                <input className="input !w-28" type="number" min="1" max="500" value={setForm.instrumentCount} onChange={(e) => setSetForm({ ...setForm, instrumentCount: e.target.value })} />
+              </div>
+              <button className="btn-primary text-xs" disabled={setForm.code.length < 2 || setForm.nameAr.length < 3}
+                onClick={() => act(() => api('/api/cssd/sets', { method: 'POST', body: JSON.stringify({ ...setForm, instrumentCount: Number(setForm.instrumentCount) }) }), 'أُضيف الطقم')}>إضافة</button>
+            </div>
+          </Card>}
+
+          {can('cssd.reprocess') && <Card title="استلام حزمة ملوّثة">
+            <div className="space-y-2">
+              <select className="input" value={recv.setId} onChange={(e) => setRecv({ ...recv, setId: e.target.value })}>
+                <option value="">اختر الطقم</option>
+                {sets.map((s: any) => <option key={s.id} value={s.id}>{s.name_ar} ({s.code}) — {s.live_packs ? `نسخة قائمة` : 'متاح'}</option>)}
+              </select>
+              <select className="input" value={recv.packaging} onChange={(e) => setRecv({ ...recv, packaging: e.target.value })}>
+                <option value="wrap">تغليف ورقي (٣٠ يومًا)</option><option value="container">حاوية (٩٠ يومًا)</option>
+              </select>
+              <button className="btn-primary text-xs" disabled={!recv.setId}
+                onClick={() => act(async () => {
+                  const r = await api<any>('/api/cssd/packs', { method: 'POST', body: JSON.stringify(recv) });
+                  setRecv({ ...recv, setId: '' });
+                  return r;
+                }, 'سُجّل استلام الحزمة بدورة جديدة')}>تسجيل الاستلام</button>
+              <p className="text-[11px] text-slate-500">الحزمة العائدة تُعاد بنفس رقمها مع زيادة عدّاد الدورات بدل إنشاء هوية جديدة.</p>
+            </div>
+          </Card>}
+
+          {can('cssd.sterilize') && <Card title="فتح دورة تعقيم">
+            <div className="space-y-2">
+              <select className="input" value={loadForm.autoclaveCode} onChange={(e) => setLoadForm({ ...loadForm, autoclaveCode: e.target.value })}>
+                <option value="STM-01">STM-01 — بخار</option><option value="STM-02">STM-02 — بخار</option><option value="STM-03">STM-03 — بخار</option>
+              </select>
+              <div className="max-h-28 overflow-y-auto border rounded-lg p-2 text-xs space-y-1">
+                {packedPacks.map((p: any) => <label key={p.id} className="flex items-center gap-2">
+                  <input type="checkbox" checked={loadForm.packIds.includes(p.id)}
+                    onChange={(e) => setLoadForm({ ...loadForm, packIds: e.target.checked ? [...loadForm.packIds, p.id] : loadForm.packIds.filter((x) => x !== p.id) })} />
+                  {p.pack_no} · {p.set_name}
+                </label>)}
+                {packedPacks.length === 0 && <p className="text-slate-500">لا حزم مغلّفة جاهزة للدورة.</p>}
+              </div>
+              <button className="btn-primary text-xs" disabled={loadForm.packIds.length === 0}
+                onClick={() => act(async () => {
+                  const r = await api<any>('/api/cssd/loads', { method: 'POST', body: JSON.stringify({ ...loadForm, packIds: loadForm.packIds }) });
+                  setLoadForm({ ...loadForm, packIds: [] });
+                  return r;
+                }, 'فُتحت دورة التعقيم')}>بدء الدورة ({loadForm.packIds.length})</button>
+            </div>
+          </Card>}
+        </div>
+
+        {can('cssd.issue') && <Card title="صرف حزمة معقمة">
+          <div className="flex flex-wrap gap-2 items-end text-xs">
+            <label className="flex-1 min-w-[220px]">الحزمة
+              <select className="input mt-1" value={issue.packId} onChange={(e) => setIssue({ ...issue, packId: e.target.value })}>
+                <option value="">اختر حزمة معقّمة</option>
+                {releasedPacks.map((p: any) => <option key={p.id} value={p.id}>{p.pack_no} · {p.set_name} · {p.days_left} يوم</option>)}
+              </select>
+            </label>
+            <label>الجهة المستلمة
+              <input className="input mt-1" value={issue.issuedTo} onChange={(e) => setIssue({ ...issue, issuedTo: e.target.value })} />
+            </label>
+            {cases.length > 0 && <label>ربط بعملية (اختياري)
+              <select className="input mt-1" value={issue.caseId} onChange={(e) => setIssue({ ...issue, caseId: e.target.value })}>
+                <option value="">بدون ربط</option>
+                {cases.map((c: any) => <option key={c.id} value={c.id}>{c.case_no} · {c.procedure_name}</option>)}
+              </select>
+            </label>}
+            <button className="btn-primary text-xs" disabled={!issue.packId || issue.issuedTo.length < 2}
+              onClick={() => act(async () => {
+                const r = await api<any>(`/api/cssd/packs/${issue.packId}/issue`, { method: 'POST', body: JSON.stringify({ issuedTo: issue.issuedTo, caseId: issue.caseId || undefined }) });
+                setIssue({ ...issue, packId: '', caseId: '' });
+                return r;
+              }, 'صُرفت الحزمة وسُجّل تتبعها')}>صرف</button>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-2">لا يُقبل صرف حزمة منتهية الصلاحية أو لم تُعتمد دورتها. كل صرف يُقيّد في سجل التدقيق مع الجهة والمستخدم.</p>
+        </Card>}
+      </>}
+
+      {tab === 'ipc' && <>
+        {ipc && <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[['عزل نشط', ipc.totals.active_isolations], ['حالات مشتبهة', ipc.totals.suspected_cases],
+            ['مؤكدة آخر ٣٠ يومًا', ipc.totals.confirmed_30d], ['التزام نظافة الأيدي ٣٠ يومًا', `${ipc.totals.hygiene_compliance_30d}%`]].map(([l, v]) => (
+            <div key={String(l)} className="card p-3"><p className="text-xs text-slate-500">{l}</p><p className="text-xl font-bold">{v as any}</p></div>
+          ))}
+        </div>}
+
+        {ipc && <Card title="أوامر العزل النشطة">
+          <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr>
+            <th className="th">المريض</th><th className="th">المكان</th><th className="th">نوع الاحتياط</th><th className="th">الكائن</th><th className="th">السبب</th><th className="th">البداية</th><th className="th"></th>
+          </tr></thead><tbody>
+            {ipc.isolations.map((i: any) => <tr key={i.id}>
+              <td className="td text-xs">{i.patient_name}<span className="block text-slate-400">{i.mrn} · {i.admission_no ?? 'خارجي'}</span></td>
+              <td className="td text-xs">{i.ward_name ?? '—'} {i.room_no ? `${i.room_no}/${i.bed_no ?? ''}` : ''}</td>
+              <td className="td text-xs"><span className={i.precaution === 'airborne' ? 'badge bg-rose-100 text-rose-700' : 'badge bg-amber-100 text-amber-700'}>{i.precaution_ar}</span></td>
+              <td className="td text-xs">{i.organism ?? '—'}</td>
+              <td className="td text-xs max-w-[280px]">{i.reason}</td>
+              <td className="td text-xs">{dt(i.started_at)}<span className="block text-slate-400">{i.ordered_by_name}</span></td>
+              <td className="td">{can('infection.isolate') && <button className="btn-ghost text-xs" onClick={() => {
+                const reason = window.prompt('سبب إنهاء العزل (٥ أحرف على الأقل):') ?? '';
+                if (reason.trim().length >= 5) act(() => api(`/api/infection/isolations/${i.id}/end`, { method: 'POST', body: JSON.stringify({ reason }) }), 'أُنهي أمر العزل');
+              }}>إنهاء العزل</button>}</td>
+            </tr>)}
+            {ipc.isolations.length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا أوامر عزل نشطة.</td></tr>}
+          </tbody></table></div>
+        </Card>}
+
+        {can('infection.surveillance') && <Card title="تسجيل حالة عدوى مرتبطة بالرعاية">
+          <div className="grid sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs items-end">
+            <label className="lg:col-span-2">المريض
+              <select className="input mt-1" value={hai.patientId} onChange={(e) => setHai({ ...hai, patientId: e.target.value })}>
+                <option value="">اختر المريض</option>
+                {patients.map((p: any) => <option key={p.id} value={p.id}>{p.full_name_ar ?? p.full_name} · {p.mrn}</option>)}
+              </select>
+            </label>
+            <label>النوع
+              <select className="input mt-1" value={hai.caseType} onChange={(e) => setHai({ ...hai, caseType: e.target.value })}>
+                <option value="cauti">عدوى بولية</option><option value="clabsi">عدوى دم</option><option value="vap">التهاب رئة</option>
+                <option value="ssi">موضع جراحي</option><option value="cdi">مطثية عسيرة</option><option value="mrsa">MRSA</option><option value="other">أخرى</option>
+              </select>
+            </label>
+            <label>تاريخ البدء
+              <input className="input mt-1" type="date" value={hai.onsetDate} onChange={(e) => setHai({ ...hai, onsetDate: e.target.value })} />
+            </label>
+            <label>الكائن الممرض
+              <input className="input mt-1" value={hai.organism} onChange={(e) => setHai({ ...hai, organism: e.target.value })} />
+            </label>
+            <label>أيام الأجهزة
+              <input className="input mt-1" type="number" min="0" max="365" value={hai.deviceDays} onChange={(e) => setHai({ ...hai, deviceDays: e.target.value })} />
+            </label>
+            <label className="lg:col-span-4">ملاحظات
+              <input className="input mt-1" value={hai.notes} onChange={(e) => setHai({ ...hai, notes: e.target.value })} />
+            </label>
+            <div className="lg:col-span-2">
+              <button className="btn-primary text-xs" disabled={!hai.patientId || !hai.onsetDate}
+                onClick={() => act(async () => {
+                  const r = await api<any>('/api/infection/cases', {
+                    method: 'POST', body: JSON.stringify({
+                      patientId: hai.patientId, caseType: hai.caseType, onsetDate: hai.onsetDate,
+                      organism: hai.organism || undefined, deviceDays: hai.deviceDays ? Number(hai.deviceDays) : undefined,
+                      notes: hai.notes || undefined,
+                    }),
+                  });
+                  setHai({ ...hai, organism: '', deviceDays: '', notes: '' });
+                  return r;
+                }, 'سُجّلت حالة مشتبهة بانتظار مراجعة شخص آخر')}>تسجيل الحالة</button>
+            </div>
+          </div>
+        </Card>}
+
+        {ipc && <Card title="ترصد حالات العدوى (٩٠ يومًا)">
+          <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr>
+            <th className="th">المريض</th><th className="th">النوع</th><th className="th">البداية</th><th className="th">أيام الأجهزة</th><th className="th">الحالة</th><th className="th">المراجع</th><th className="th"></th>
+          </tr></thead><tbody>
+            {ipc.cases.map((c: any) => <tr key={c.id} className={c.status === 'suspected' ? 'bg-amber-50/50' : ''}>
+              <td className="td text-xs">{c.patient_name}<span className="block text-slate-400">{c.mrn} · {c.admission_no ?? 'خارجي'}</span></td>
+              <td className="td text-xs">{c.case_type_ar}<span className="block text-slate-400">{c.organism ?? '—'}</span></td>
+              <td className="td text-xs">{day(c.onset_date)}</td>
+              <td className="td text-xs">{c.device_days ?? '—'}</td>
+              <td className="td text-xs"><Badge value={c.status} /></td>
+              <td className="td text-xs">{c.reviewed_by_name ?? '—'}{c.review_note && <span className="block text-slate-400 max-w-[240px]">{c.review_note}</span>}</td>
+              <td className="td"><div className="flex gap-1">
+                {can('infection.confirm') && c.status === 'suspected' && <>
+                  <button className="btn-primary text-xs" onClick={() => {
+                    const note = window.prompt('ملاحظة الاعتماد (٥ أحرف على الأقل):') ?? '';
+                    if (note.trim().length >= 5) act(() => api(`/api/infection/cases/${c.id}/review`, { method: 'POST', body: JSON.stringify({ decision: 'confirmed', note }) }), 'اعتُمدت الحالة');
+                  }}>تأكيد</button>
+                  <button className="btn-ghost text-xs" onClick={() => {
+                    const note = window.prompt('سبب الاستبعاد (٥ أحرف على الأقل):') ?? '';
+                    if (note.trim().length >= 5) act(() => api(`/api/infection/cases/${c.id}/review`, { method: 'POST', body: JSON.stringify({ decision: 'excluded', note }) }), 'استُبعدت الحالة');
+                  }}>استبعاد</button>
+                </>}
+              </div></td>
+            </tr>)}
+            {ipc.cases.length === 0 && <tr><td className="td text-slate-500" colSpan={7}>لا حالات مسجلة.</td></tr>}
+          </tbody></table></div>
+          <p className="text-[11px] text-slate-500 mt-2">
+            هذه أعداد وصفية للحالات المرتبطة بالرعاية وليست معدلات معيارية معدّلة حسب NHSN/CDC. لا يوجد كشف آلي لتفشي العدوى؛ المراجعة بشرية.
+          </p>
+        </Card>}
+
+        <div className="grid lg:grid-cols-2 gap-3">
+          {can('infection.isolate') && <Card title="أمر عزل جديد">
+            <div className="space-y-2 text-xs">
+              <select className="input" value={iso.patientId} onChange={(e) => setIso({ ...iso, patientId: e.target.value })}>
+                <option value="">اختر المريض</option>
+                {patients.map((p: any) => <option key={p.id} value={p.id}>{p.full_name_ar ?? p.full_name} · {p.mrn}</option>)}
+              </select>
+              <select className="input" value={iso.precaution} onChange={(e) => setIso({ ...iso, precaution: e.target.value })}>
+                <option value="contact">ملامسة</option><option value="droplet">رذاذ</option><option value="airborne">هوائي</option><option value="protective">حماية عكسية</option>
+              </select>
+              <input className="input" placeholder="الكائن الممرض (اختياري)" value={iso.organism} onChange={(e) => setIso({ ...iso, organism: e.target.value })} />
+              <input className="input" placeholder="السبب السريري (٥ أحرف على الأقل)" value={iso.reason} onChange={(e) => setIso({ ...iso, reason: e.target.value })} />
+              <button className="btn-primary text-xs" disabled={!iso.patientId || iso.reason.length < 5}
+                onClick={() => act(async () => {
+                  const r = await api<any>('/api/infection/isolations', { method: 'POST', body: JSON.stringify({ ...iso, organism: iso.organism || undefined }) });
+                  setIso({ ...iso, patientId: '', organism: '', reason: '' });
+                  return r;
+                }, 'صدر أمر العزل')}>إصدار أمر العزل</button>
+              <p className="text-[11px] text-slate-500">عزل واحد نشط لكل مريض؛ تغيير الاحتياط يتطلب إنهاء الأمر السابق بسبب موثّق.</p>
+            </div>
+          </Card>}
+
+          {can('infection.audit') && <Card title="تدقيق نظافة الأيدي">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label>الوحدة<input className="input mt-1" value={hyg.unit} onChange={(e) => setHyg({ ...hyg, unit: e.target.value })} /></label>
+              <label>اللحظة
+                <select className="input mt-1" value={hyg.moment} onChange={(e) => setHyg({ ...hyg, moment: e.target.value })}>
+                  <option value="before_patient">قبل لمس المريض</option><option value="before_aseptic">قبل إجراء معقّم</option>
+                  <option value="after_body_fluid">بعد سوائل الجسم</option><option value="after_patient">بعد لمس المريض</option>
+                  <option value="after_surroundings">بعد محيط المريض</option>
+                </select>
+              </label>
+              <label>الفرص<input className="input mt-1" type="number" min="1" max="100" value={hyg.opportunities} onChange={(e) => setHyg({ ...hyg, opportunities: e.target.value })} /></label>
+              <label>الملتزم بها<input className="input mt-1" type="number" min="0" max="100" value={hyg.compliant} onChange={(e) => setHyg({ ...hyg, compliant: e.target.value })} /></label>
+              <label>الفئة المرصودة
+                <select className="input mt-1" value={hyg.observedRole} onChange={(e) => setHyg({ ...hyg, observedRole: e.target.value })}>
+                  <option value="nurse">تمريض</option><option value="physician">أطباء</option><option value="tech">فنيون</option><option value="other">أخرى</option>
+                </select>
+              </label>
+              <label>ملاحظة<input className="input mt-1" value={hyg.notes} onChange={(e) => setHyg({ ...hyg, notes: e.target.value })} /></label>
+              <div className="col-span-2">
+                <button className="btn-primary text-xs" disabled={Number(hyg.compliant) > Number(hyg.opportunities)}
+                  onClick={() => act(() => api('/api/infection/hand-hygiene', {
+                    method: 'POST', body: JSON.stringify({
+                      ...hyg, opportunities: Number(hyg.opportunities), compliant: Number(hyg.compliant), notes: hyg.notes || undefined,
+                    }),
+                  }), 'سُجّلت ملاحظة نظافة الأيدي')}>تسجيل الملاحظة</button>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-2">الملاحظات نهائية وغير قابلة للتعديل أو الحذف بعد الحفظ (دليل تدقيق).</p>
+          </Card>}
+        </div>
+
+        {ipc && <Card title="التزام نظافة الأيدي حسب الوحدة (٣٠ يومًا)">
+          <table className="w-full"><thead><tr><th className="th">الوحدة</th><th className="th">الفرص</th><th className="th">الملتزم بها</th><th className="th">النسبة</th></tr></thead><tbody>
+            {ipc.hygiene.map((h: any) => <tr key={h.unit}>
+              <td className="td text-xs">{h.unit}</td><td className="td text-xs">{h.opportunities}</td><td className="td text-xs">{h.compliant}</td>
+              <td className="td text-xs"><span className={Number(h.compliance_pct) < 80 ? 'text-rose-700 font-semibold' : 'text-emerald-700 font-semibold'}>{h.compliance_pct}%</span></td>
+            </tr>)}
+            {ipc.hygiene.length === 0 && <tr><td className="td text-slate-500" colSpan={4}>لا ملاحظات في آخر ٣٠ يومًا.</td></tr>}
+          </tbody></table>
+        </Card>}
+      </>}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------- App -----
 const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'dashboard', label: 'لوحة القيادة', perms: ['report.read'] },
@@ -2306,6 +2691,7 @@ const NAV: { key: PageKey; label: string; perms: string[] }[] = [
   { key: 'icu', label: 'العناية المركزة', perms: ['icu.read'] },
   { key: 'bloodbank', label: 'بنك الدم', perms: ['bloodbank.read'] },
   { key: 'nutrition', label: 'التغذية الطبية', perms: ['nutrition.read', 'nutrition.kitchen'] },
+  { key: 'cssd', label: 'التعقيم ومكافحة العدوى', perms: ['cssd.read', 'infection.read'] },
   { key: 'pharmacy', label: 'الصيدلية', perms: ['pharmacy.prescription.read'] },
   { key: 'billing', label: 'الفوترة', perms: ['billing.invoice.read'] },
   { key: 'reports', label: 'التقارير', perms: ['report.read'] },
@@ -2373,6 +2759,7 @@ export default function App() {
         {page === 'icu' && <Icu m={auth} />}
         {page === 'bloodbank' && <BloodBank m={auth} />}
         {page === 'nutrition' && <Nutrition m={auth} />}
+        {page === 'cssd' && <CSSD m={auth} />}
         {page === 'lab' && <Lab m={auth} />}
         {page === 'radiology' && <Radiology m={auth} />}
         {page === 'pharmacy' && <Pharmacy m={auth} />}

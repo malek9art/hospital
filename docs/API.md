@@ -198,6 +198,23 @@
 | POST | `/api/nutrition/tube-orders/:id/stop` | سبب ≥ ٥ أحرف + `completed?`؛ الوصفة نفسها لا تُعدّل (trigger) |
 | GET | `/api/nutrition/patients/:patientId` | الملف الغذائي: الحساسيات والقيود الإلزامية، الأمر النشط، الفحوص والتقييمات والأوامر والمتابعات، وصواني آخر يومين ونسبة الالتزام |
 | POST | `/api/nutrition/patients/:patientId/followups` | `nutrition.assess` — وزن/متوسط استهلاك/تحمل (جيد/جزئي/ضعيف) + ملاحظة ≥ ١٠ أحرف |
+| GET | `/api/cssd/board` | `cssd.read` — الحزم (مع الطقم والدورة والصلاحية والأيام المتبقية و`expired`)، آخر ٣٠ دورة، الأطقم وعدد نسخها القائمة، وإجماليات (قيد المعالجة/تعقيم/جاهزة/مصروفة/منتهية/محجوزة/مسحوبة) |
+| POST | `/api/cssd/sets` | `cssd.manage` — `{code, nameAr, category, instrumentCount, department?}`؛ رمز فريد للمنشأة |
+| POST | `/api/cssd/packs` | `cssd.reprocess` — استلام حزمة ملوّثة لطقم بلا نسخة قائمة؛ يعيد استخدام حزمة `returned` بنفس رقمها وزيادة `cycleCount` |
+| POST | `/api/cssd/packs/:id/{wash,pack,return}` | `cssd.reprocess` — dirty→washing→packed، واسترجاع حزمة مصروفة/مستخدمة إلى `returned` |
+| POST | `/api/cssd/loads` | `cssd.sterilize` — `{autoclaveCode, method, packIds[]}`؛ حزم `packed` فقط، رقم دورة تلقائي لكل جهاز |
+| POST | `/api/cssd/loads/:id/result` | `cssd.sterilize` — مؤشر كيميائي/بيولوجي؛ أي فشل يحجز كل حزم الدورة (`quarantined`) |
+| POST | `/api/cssd/loads/:id/approve` | `cssd.release` — يتطلب دورة `passed` ومنفّذًا مختلفًا؛ يفرج الحزم بصلاحية ٣٠ (تغليف) أو ٩٠ (حاوية) يومًا |
+| POST | `/api/cssd/loads/:id/recall` | `cssd.release` — سبب ≥ ٥ أحرف؛ يسحب حزم الدورة ويعيد العمليات المتأثرة للتتبع |
+| POST | `/api/cssd/packs/:id/issue` | `cssd.issue` — `{issuedTo, caseId?}`؛ يرفض غير المعقّمة/غير المعتمدة/المنتهية/المرتبطة بعملية مكتملة |
+| POST | `/api/cssd/packs/:id/use` | `cssd.issue` — تسجيل الاستخدام بعد الصرف فقط |
+| GET | `/api/cssd/packs/:id` | `cssd.read` — الحزمة مع الدورة والصلاحية والأيام المتبقية و`expired` |
+| GET | `/api/infection/board` | `infection.read` — أوامر العزل النشطة مع مكان المريض، حالات العدوى ٩٠ يومًا، التزام نظافة الأيدي ٣٠ يومًا لكل وحدة، وإجماليات |
+| POST | `/api/infection/isolations` | `infection.isolate` — عزل واحد نشط لكل مريض، والوصول للملف يخضع لعلاقة الرعاية/break-glass |
+| POST | `/api/infection/isolations/:id/end` | سبب ≥ ٥ أحرف؛ أمر العزل المغلق غير قابل للتعديل (trigger) |
+| POST | `/api/infection/cases` | `infection.surveillance` — `{patientId, caseType, onsetDate, organism?, deviceDays?, notes?}` بحالة `suspected` |
+| POST | `/api/infection/cases/:id/review` | `infection.confirm` — `confirmed/excluded` مع ملاحظة ≥ ٥ أحرف، ومُبلّغ الحالة لا يعتمدها |
+| POST | `/api/infection/hand-hygiene` | `infection.audit` — فرص/ملتزم بها مع تحقق `compliant ≤ opportunities`؛ السجل ملحق فقط |
 
 **حدود:** لا قاعدة تراكيب غذائية ولا مخزون مطبخ ولا قائمة طعام؛ حصة الطاقة لكل وجبة ثابتة، والأهداف تقديرية حسب الوزن. نقاط الفحص أداة فرز (مستوحاة من NRS-2002) وليست جهازًا طبيًا معتمدًا.
 
