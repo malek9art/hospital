@@ -93,6 +93,17 @@ const PERMISSIONS: [string, string, string][] = [
   ['hr.roster.manage', 'hr', 'جدولة المناوبات ومتابعة الحضور'],
   ['hr.leave.approve', 'hr', 'مراجعة واعتماد أو رفض طلبات الإجازات (فصل مهام)'],
   ['hr.self', 'hr', 'بوابة الموظف الذاتية للمناوبات والإجازات والتراخيص'],
+  ['inventory.read', 'inventory', 'عرض المخازن الطبية والأصناف والأرصدة'],
+  ['inventory.manage', 'inventory', 'إدارة المستودعات وكتالوج الأصناف والتسويات الجردية'],
+  ['inventory.stock', 'inventory', 'توريد واستلام دفعات المستلزمات الطبية'],
+  ['inventory.request', 'inventory', 'طلب صرف مستلزمات مخزنية للقسم'],
+  ['inventory.issue', 'inventory', 'اعتماد وصرف طلبات الأقسام من المخازن (فصل مهام)'],
+  ['dental.read', 'dental', 'عرض عيادة الأسنان ومخطط الأسنان (FDI)'],
+  ['dental.chart', 'dental', 'تسجيل حالة الأسنان على المخطط السني (Odontogram)'],
+  ['dental.perform', 'dental', 'إجراء وإتمام المعالجات السنية'],
+  ['physio.read', 'physio', 'عرض لوحة العلاج الطبيعي والخطط التأهيلية'],
+  ['physio.refer', 'physio', 'تحويل المرضى للعلاج الطبيعي والتأهيل'],
+  ['physio.perform', 'physio', 'تقييم المرضى وتنفيذ جلسات العلاج الطبيعي'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -109,29 +120,32 @@ const PERMISSIONS: [string, string, string][] = [
 const ALL = PERMISSIONS.map((p) => p[0]);
 const ROLE_PERMS: Record<string, string[]> = {
   system_admin: ['admin.users.read', 'admin.users.manage', 'admin.roles.manage', 'admin.facility.manage', 'admin.sessions.manage', 'admin.settings.manage', 'audit.read', 'report.read'],
-  hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read', 'hr.read', 'hr.credentials.verify', 'hr.leave.approve'],
+  hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read', 'hr.read', 'hr.credentials.verify', 'hr.leave.approve', 'inventory.read', 'dental.read', 'physio.read', 'radiology.read', 'bloodbank.read'],
   hr_manager: ['hr.read', 'hr.manage', 'hr.credentials.verify', 'hr.roster.manage', 'hr.leave.approve', 'hr.self', 'report.read'],
-  surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read', 'cssd.read', 'cssd.issue', 'hr.self'],
+  storekeeper: ['inventory.read', 'inventory.manage', 'inventory.stock', 'inventory.request', 'inventory.issue', 'report.read', 'hr.self'],
+  dentist: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'radiology.order', 'radiology.read', 'dental.read', 'dental.chart', 'dental.perform', 'billing.invoice.read', 'inventory.read', 'inventory.request', 'report.read', 'hr.self'],
+  physiotherapist: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'physio.read', 'physio.perform', 'inventory.read', 'inventory.request', 'report.read', 'hr.self'],
+  surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read', 'cssd.read', 'cssd.issue', 'physio.read', 'physio.refer', 'inventory.read', 'inventory.request', 'hr.self'],
   anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read', 'cssd.read', 'hr.self'],
-  or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read', 'cssd.read', 'cssd.issue', 'hr.self'],
-  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake', 'hr.self'],
-  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake', 'infection.read', 'cssd.read', 'hr.self'],
+  or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read', 'cssd.read', 'cssd.issue', 'inventory.read', 'inventory.request', 'hr.self'],
+  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake', 'physio.read', 'physio.refer', 'hr.self'],
+  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake', 'infection.read', 'cssd.read', 'physio.read', 'hr.self'],
   dietitian: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'nutrition.read', 'nutrition.assess', 'nutrition.order', 'nutrition.tube', 'report.read', 'hr.self'],
   kitchen_staff: ['patient.read', 'patient.chart.administrative', 'nutrition.kitchen', 'hr.self'],
-  cssd_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'cssd.read', 'cssd.manage', 'cssd.reprocess', 'cssd.sterilize', 'cssd.release', 'cssd.issue', 'report.read', 'hr.self'],
+  cssd_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'cssd.read', 'cssd.manage', 'cssd.reprocess', 'cssd.sterilize', 'cssd.release', 'cssd.issue', 'inventory.read', 'inventory.request', 'report.read', 'hr.self'],
   infection_control: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.confirm', 'infection.audit', 'cssd.read', 'report.read', 'report.export', 'hr.self'],
-  blood_bank_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'bloodbank.read', 'bloodbank.crossmatch', 'bloodbank.issue', 'bloodbank.stock', 'bloodbank.reaction', 'report.read', 'hr.self'],
-  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'hr.read', 'hr.roster.manage', 'hr.leave.approve', 'hr.self'],
-  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'hr.self'],
-  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.screen', 'nutrition.intake', 'cssd.read', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.audit', 'hr.self'],
+  blood_bank_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'bloodbank.read', 'bloodbank.crossmatch', 'bloodbank.issue', 'bloodbank.stock', 'bloodbank.reaction', 'inventory.read', 'inventory.request', 'report.read', 'hr.self'],
+  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'lab.result.amend', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'dental.read', 'physio.read', 'physio.refer', 'inventory.read', 'inventory.request', 'hr.read', 'hr.roster.manage', 'hr.leave.approve', 'hr.self'],
+  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'dental.read', 'physio.read', 'physio.refer', 'inventory.read', 'inventory.request', 'hr.self'],
+  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.screen', 'nutrition.intake', 'cssd.read', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.audit', 'physio.read', 'inventory.read', 'inventory.request', 'hr.self'],
   receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record', 'hr.self'],
   records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export', 'hr.self'],
-  lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read', 'hr.self'],
-  radiology_tech: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.perform', 'hr.self'],
+  lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.result.amend', 'lab.critical.ack', 'clinical.encounter.read', 'inventory.read', 'inventory.request', 'hr.self'],
+  radiology_tech: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.perform', 'inventory.read', 'inventory.request', 'hr.self'],
   radiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.report', 'radiology.verify', 'hr.self'],
-  pharmacist: ['patient.read', 'patient.chart.clinical', 'pharmacy.prescription.read', 'pharmacy.dispense', 'pharmacy.stock.manage', 'billing.invoice.read', 'hr.self'],
-  accountant: ['patient.read', 'patient.chart.administrative', 'billing.invoice.read', 'billing.invoice.create', 'billing.payment.record', 'billing.invoice.void', 'billing.discount.apply', 'insurance.claim.manage', 'report.read', 'report.export', 'report.finance', 'hr.self'],
-  auditor: ['audit.read', 'report.read', 'report.export', 'report.finance', 'admin.users.read', 'nursing.read', 'hr.read'],
+  pharmacist: ['patient.read', 'patient.chart.clinical', 'pharmacy.prescription.read', 'pharmacy.dispense', 'pharmacy.stock.manage', 'billing.invoice.read', 'inventory.read', 'inventory.request', 'hr.self'],
+  accountant: ['patient.read', 'patient.chart.administrative', 'billing.invoice.read', 'billing.invoice.create', 'billing.payment.record', 'billing.invoice.void', 'billing.discount.apply', 'insurance.claim.manage', 'inventory.read', 'report.read', 'report.export', 'report.finance', 'hr.self'],
+  auditor: ['audit.read', 'report.read', 'report.export', 'report.finance', 'admin.users.read', 'nursing.read', 'hr.read', 'inventory.read'],
   patient: ['portal.self'],
 };
 
@@ -139,6 +153,9 @@ const ROLES: [string, string, string][] = [
   ['system_admin', 'مدير النظام', 'System administrator'],
   ['hospital_director', 'الإدارة التنفيذية', 'Executive management'],
   ['hr_manager', 'مدير الموارد البشرية', 'Human resources manager'],
+  ['storekeeper', 'أمين المخازن والإمداد', 'Medical storekeeper'],
+  ['dentist', 'طبيب أسنان', 'Dentist'],
+  ['physiotherapist', 'أخصائي علاج طبيعي', 'Physiotherapist'],
   ['department_manager', 'مدير قسم', 'Department manager'],
   ['physician', 'طبيب', 'Physician'],
   ['nurse', 'تمريض', 'Nurse'],
@@ -193,18 +210,26 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   const deptDefs: [string, string, string, string][] = [
     ['GEN', 'الطب العام', 'General Medicine', 'outpatient'],
     ['ER', 'الطوارئ', 'Emergency', 'emergency'],
-    ['LAB', 'المختبر', 'Laboratory', 'lab'],
+    ['LAB', 'المختبرات الطبية', 'Medical Laboratories', 'lab'],
     ['PHR', 'الصيدلية', 'Pharmacy', 'pharmacy'],
     ['ADM', 'الإدارة', 'Administration', 'administration'],
     ['INP', 'التنويم', 'Inpatient', 'inpatient'],
-    ['RAD', 'الأشعة', 'Radiology', 'radiology'],
-    ['OR', 'العمليات والتخدير', 'Operating theatres', 'surgery'],
+    ['RAD', 'الأشعة والتصوير الطبي', 'Radiology & Medical Imaging', 'radiology'],
+    ['OR', 'العمليات والتخدير', 'Operating Theatres', 'surgery'],
+    ['STR', 'المخازن والإمداد الطبي', 'Medical Stores & Warehouses', 'stores'],
+    ['DNT', 'عيادة الأسنان والفم', 'Dental & Oral Clinic', 'dental'],
+    ['BBK', 'بنك الدم وطب نقل الدم', 'Blood Bank & Transfusion', 'bloodbank'],
+    ['PT', 'العلاج الطبيعي والتأهيل الطبي', 'Physical Therapy & Rehabilitation', 'physiotherapy'],
+    ['ICU', 'العناية المركزة', 'Intensive Care Unit', 'icu'],
+    ['CSS', 'التعقيم المركزي', 'Central Sterile Supply (CSSD)', 'cssd'],
+    ['NUT', 'التغذية العلاجية', 'Clinical Nutrition', 'nutrition'],
   ];
   const deptIds: Record<string, string> = {};
   for (const [code, ar, en, type] of deptDefs) {
     const id = nextSeedUuid();
     deptIds[code] = id;
     await db.query('INSERT INTO departments (id, facility_id, code, name_ar, name_en, dept_type) VALUES ($1,$2,$3,$4,$5,$6)', [id, facilityId, code, ar, en, type]);
+    await db.query('INSERT INTO departments (id, facility_id, code, name_ar, name_en, dept_type) VALUES ($1,$2,$3,$4,$5,$6)', [nextSeedUuid(), branchId, code, ar, en, type]);
   }
 
   const theatreIds: Record<string, string> = {};
@@ -250,6 +275,9 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     account: await hashPassword('Account#Demo2026'),
     auditor: await hashPassword('Auditor#Demo2026'),
     hr: await hashPassword('HR#Demo2026'),
+    stores: await hashPassword('Store#Demo2026'),
+    dental: await hashPassword('Dental#Demo2026'),
+    physio: await hashPassword('Physio#Demo2026'),
     patient: await hashPassword('Patient#Demo2026'),
   };
 
@@ -258,6 +286,10 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['director@demo.hms', 'د. خالد العتيبي', 'Dr. Khalid Alotaibi', 'المدير التنفيذي', 'hospital_director', password.director, 'ADM'],
     ['hr@demo.hms', 'ماجد المالكي', 'Majed Almalki', 'أخصائي الموارد البشرية', 'hr_manager', password.hr, 'ADM'],
     ['hr2@demo.hms', 'مها الشمراني', 'Maha Alshamrani', 'مشرفة شؤون الممارسين والتراخيص', 'hr_manager', password.hr, 'ADM'],
+    ['stores@demo.hms', 'فارس القحطاني', 'Fares Alqahtani', 'أمين المخازن الطبية', 'storekeeper', password.stores, 'STR'],
+    ['stores2@demo.hms', 'بندر السبيعي', 'Bandar Alsubaie', 'مشرف الإمداد والتموين الطبي', 'storekeeper', password.stores, 'STR'],
+    ['dentist@demo.hms', 'د. طارق الغامدي', 'Dr. Tariq Alghamdi', 'استشاري طب وجراحة الأسنان', 'dentist', password.dental, 'DNT'],
+    ['physio@demo.hms', 'ريان الشهري', 'Rayan Alshehri', 'أخصائي أول علاج طبيعي وتأهيل', 'physiotherapist', password.physio, 'PT'],
     ['dr.ahmed@demo.hms', 'د. أحمد الحربي', 'Dr. Ahmed Alharbi', 'استشاري طب باطني', 'physician', password.doctor, 'GEN'],
     ['dr.sara@demo.hms', 'د. سارة القحطاني', 'Dr. Sara Alqahtani', 'استشارية طوارئ', 'physician', password.doctor, 'ER'],
     ['nurse@demo.hms', 'مريم الزهراني', 'Mariam Alzahrani', 'ممرضة أولى', 'nurse', password.nurse, 'INP'],
@@ -265,13 +297,13 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['surgeon@demo.hms', 'د. عبدالله الغامدي', 'Dr. Abdullah Alghamdi', 'استشاري جراحة عامة', 'surgeon', password.surgeon, 'OR'],
     ['anesthesia@demo.hms', 'د. هدى المطيري', 'Dr. Huda Almutairi', 'استشارية تخدير', 'anesthesiologist', password.anesthesia, 'OR'],
     ['ornurse@demo.hms', 'سارة الدوسري', 'Sara Aldosari', 'ممرضة غرفة عمليات', 'or_nurse', password.nurse, 'OR'],
-    ['intensivist@demo.hms', 'د. فيصل الحربي', 'Dr. Faisal Alharbi', 'استشاري عناية مركزة', 'intensivist', password.icu, 'INP'],
-    ['icunurse@demo.hms', 'أمل الجهني', 'Amal Aljohani', 'ممرضة عناية مركزة', 'icu_nurse', password.icu, 'INP'],
-    ['bloodbank@demo.hms', 'نورة الحربي', 'Noura Alharbi', 'فنية بنك دم', 'blood_bank_tech', password.blood, 'LAB'],
-    ['dietitian@demo.hms', 'هيفاء الزهراني', 'Haifa Alzahrani', 'أخصائية تغذية علاجية', 'dietitian', password.nutrition, 'INP'],
-    ['kitchen@demo.hms', 'ماجد الشهري', 'Majed Alshehri', 'مسؤول خدمات التغذية', 'kitchen_staff', password.kitchen, 'INP'],
-    ['cssd@demo.hms', 'عمر باوزير', 'Omar Bawazir', 'فني تعقيم مركزي', 'cssd_tech', password.cssd, 'OR'],
-    ['cssd2@demo.hms', 'خديجة عسيري', 'Khadija Asiri', 'مشرفة التعقيم المركزي', 'cssd_tech', password.cssd, 'OR'],
+    ['intensivist@demo.hms', 'د. فيصل الحربي', 'Dr. Faisal Alharbi', 'استشاري عناية مركزة', 'intensivist', password.icu, 'ICU'],
+    ['icunurse@demo.hms', 'أمل الجهني', 'Amal Aljohani', 'ممرضة عناية مركزة', 'icu_nurse', password.icu, 'ICU'],
+    ['bloodbank@demo.hms', 'نورة الحربي', 'Noura Alharbi', 'فنية بنك دم', 'blood_bank_tech', password.blood, 'BBK'],
+    ['dietitian@demo.hms', 'هيفاء الزهراني', 'Haifa Alzahrani', 'أخصائية تغذية علاجية', 'dietitian', password.nutrition, 'NUT'],
+    ['kitchen@demo.hms', 'ماجد الشهري', 'Majed Alshehri', 'مسؤول خدمات التغذية', 'kitchen_staff', password.kitchen, 'NUT'],
+    ['cssd@demo.hms', 'عمر باوزير', 'Omar Bawazir', 'فني تعقيم مركزي', 'cssd_tech', password.cssd, 'CSS'],
+    ['cssd2@demo.hms', 'خديجة عسيري', 'Khadija Asiri', 'مشرفة التعقيم المركزي', 'cssd_tech', password.cssd, 'CSS'],
     ['infection@demo.hms', 'د. رقية الأنصاري', 'Dr. Ruqaya Alansari', 'استشارية مكافحة العدوى', 'infection_control', password.infection, 'INP'],
     ['reception@demo.hms', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', 'receptionist', password.reception, 'ADM'],
     ['records@demo.hms', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', 'records_officer', password.records, 'ADM'],
@@ -363,7 +395,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.er_visit', '{"amount":200}') ON CONFLICT DO NOTHING`, [facilityId]);
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.surgery_case', '{"amount":3500}') ON CONFLICT DO NOTHING`, [facilityId]);
     await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, 'pricing.anesthesia_case', '{"amount":1200}') ON CONFLICT DO NOTHING`, [facilityId]);
-    for (const [modality, amount] of Object.entries({ xray: 150, ct: 650, mri: 1100, us: 300, mammography: 400, fluoroscopy: 500 })) {
+    for (const [modality, amount] of Object.entries({ xray: 150, ct: 650, mri: 1100, us: 300, mammography: 400, fluoroscopy: 500, panoramic: 180 })) {
       await db.query(`INSERT INTO app_settings (facility_id, key, value) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
         [facilityId, `pricing.imaging_${modality}`, JSON.stringify({ amount })]);
     }
@@ -1103,6 +1135,9 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
         ['EMP-000004', pharmaUser, 'ريم المالكي', 'Reem Almalki', 'allied_health', 'صيدلانية سريرية', deptIds.PHR, 'full_time', '2023-06-01', '1044556604', '0504455604'],
         ['EMP-000005', receptionUser, 'عبدالله الشهري', 'Abdullah Alshehri', 'administrative', 'مسؤول استقبال مرضى', deptIds.ADM, 'full_time', '2024-02-01', '1044556605', '0504455605'],
         ['EMP-000006', hr1, 'ماجد المالكي', 'Majed Almalki', 'administrative', 'أخصائي موارد بشرية', deptIds.ADM, 'full_time', '2023-11-12', '1044556606', '0504455606'],
+        ['EMP-000007', userIds['dentist:dentist@demo.hms'], 'د. طارق الغامدي', 'Dr. Tariq Alghamdi', 'physician', 'استشاري طب وجراحة الأسنان', deptIds.DNT, 'full_time', '2022-07-01', '1044556607', '0504455607'],
+        ['EMP-000008', userIds['physiotherapist:physio@demo.hms'], 'ريان الشهري', 'Rayan Alshehri', 'allied_health', 'أخصائي أول علاج طبيعي وتأهيل', deptIds.PT, 'full_time', '2023-04-15', '1044556608', '0504455608'],
+        ['EMP-000009', userIds['storekeeper:stores@demo.hms'], 'فارس القحطاني', 'Fares Alqahtani', 'support', 'أمين المخازن الطبية', deptIds.STR, 'full_time', '2023-08-20', '1044556609', '0504455609'],
       ];
 
       const empIds: Record<string, string> = {};
@@ -1165,10 +1200,255 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
          ) VALUES
            ($1,$2,'LVR-000001',$3,'study', current_date + 14, current_date + 16, 3, 'حضور المؤتمر السعودي للباطنية', 'approved', $4, $5, now() - interval '1 day', 'معتمد مع تغطية العيادة'),
            ($6,$2,'LVR-000002',$7,'annual', current_date + 7, current_date + 11, 5, 'إجازة سنوية مستحقة وفق الجدول', 'pending', $8, NULL, NULL, NULL)`,
+          [
+            nextSeedUuid(), facilityId, empIds['EMP-000001'], drAhmed, hr2,
+            nextSeedUuid(), empIds['EMP-000003'], nurseUser,
+          ],
+        );
+
+      await db.query(
+        `INSERT INTO hr_credentials (
+           id, facility_id, employee_id, credential_type, license_no, issuing_body,
+           issued_date, expiry_date, status, recorded_by, verified_by, verified_at, notes
+         ) VALUES
+           ($1,$2,$3,'scfhs','SCFHS-22-9410','الهيئة السعودية للتخصصات الصحية', current_date - 350, current_date + 380, 'verified', $6, $7, now() - interval '340 days', 'تصنيف استشاري طب وجراحة الأسنان ساري'),
+           ($4,$2,$5,'scfhs','SCFHS-23-5182','الهيئة السعودية للتخصصات الصحية', current_date - 260, current_date + 460, 'verified', $6, $7, now() - interval '250 days', 'تصنيف أخصائي أول علاج طبيعي وتأهيل ساري')`,
         [
-          nextSeedUuid(), facilityId, empIds['EMP-000001'], drAhmed, hr2,
-          nextSeedUuid(), empIds['EMP-000003'], nurseUser,
+          nextSeedUuid(), facilityId, empIds['EMP-000007'],
+          nextSeedUuid(), empIds['EMP-000008'],
+          hr1, hr2,
         ],
+      );
+    }
+  }
+
+  // -------------------------------------- Stores, Radiology, Labs, Dental & PT
+  {
+    const store1 = userIds['storekeeper:stores@demo.hms'];
+    const store2 = userIds['storekeeper:stores2@demo.hms'];
+    const dentist = userIds['dentist:dentist@demo.hms'];
+    const physio = userIds['physiotherapist:physio@demo.hms'];
+    const radTech = userIds['radiology_tech:radiology@demo.hms'];
+    const radiologist = userIds['radiologist:radiologist@demo.hms'];
+    const labTech1 = userIds['lab_tech:lab@demo.hms'];
+    const drAhmed = userIds['physician:dr.ahmed@demo.hms'];
+    const drSara = userIds['physician:dr.sara@demo.hms'];
+    const surgeonUser = userIds['surgeon:surgeon@demo.hms'];
+    const nurse1 = userIds['nurse:nurse@demo.hms'];
+
+    // 1. Medical Stores & Warehouses (المخازن)
+    const whMain = nextSeedUuid();
+    const whSurg = nextSeedUuid();
+    const whDent = nextSeedUuid();
+    const whJedMain = nextSeedUuid();
+    await db.query(
+      `INSERT INTO inventory_warehouses (id, facility_id, code, name_ar, name_en, warehouse_type, department_id, created_by)
+       VALUES
+         ($1,$5,'WH-MAIN','المستودع الطبي الرئيسي','Main Medical Warehouse','main',$7,$10),
+         ($2,$5,'WH-SURG','مستودع العمليات والجراحة','Surgical & OR Store','surgical',$8,$10),
+         ($3,$5,'WH-DENT','مستودع عيادة الأسنان','Dental Supplies Store','dental',$9,$10),
+         ($4,$6,'WH-JED-MAIN','المستودع الرئيسي — فرع جدة','Jeddah Branch Main Store','main',NULL,$10)`,
+      [whMain, whSurg, whDent, whJedMain, facilityId, branchId, deptIds.STR, deptIds.OR, deptIds.DNT, store1],
+    );
+
+    const skuDefs: [string, string, string, string, string, number, number, string, string, number, number][] = [
+      ['SKU-PPE-001', 'قفازات فحص نيتريل معقمة (علبة ١٠٠)', 'Sterile Nitrile Gloves (100/box)', 'ppe', 'علبة', 30, 28, whMain, 'LOT-GLV-26A', 120, 320],
+      ['SKU-CNS-002', 'قثاطر وريدية طرفية مقاس 20G', 'IV Cannula 20G', 'consumables', 'قطعة', 50, 4.5, whMain, 'LOT-IVC-26B', 200, 400],
+      ['SKU-SRG-003', 'خيوط جراحية قابلة للامتصاص Vicryl 2-0', 'Vicryl Suture 2-0', 'surgical_supplies', 'علبة', 15, 165, whSurg, 'LOT-VIC-26C', 8, 280], // Low stock (8 <= 15)!
+      ['SKU-LAB-004', 'أنابيب سحب دم EDTA بنفسجية', 'EDTA Blood Collection Tubes', 'lab_reagents', 'حزمة', 20, 42, whMain, 'LOT-EDT-26D', 65, 250],
+      ['SKU-DNT-005', 'كبسولات كومبوزيت ضوئي ترميمي للأسنان', 'Light-Cure Dental Composite Capsules', 'dental_supplies', 'علبة', 10, 210, whDent, 'LOT-CMP-26E', 24, 360],
+      ['SKU-PHY-006', 'أقطاب تحفيز كهربائي لاصقة (TENS Electrodes)', 'TENS Adhesive Electrodes Pack', 'physio_supplies', 'طقم', 12, 35, whMain, 'LOT-TNS-26F', 40, 500],
+    ];
+    const itemIds: Record<string, string> = {};
+    for (const [sku, ar, en, cat, unit, reorder, cost, whId, batchNo, qty, expDays] of skuDefs) {
+      const itemId = nextSeedUuid();
+      const stockId = nextSeedUuid();
+      itemIds[sku] = itemId;
+      await db.query(
+        `INSERT INTO inventory_items (id, facility_id, sku, name_ar, name_en, category, unit, reorder_level, unit_cost, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [itemId, facilityId, sku, ar, en, cat, unit, reorder, cost, store1],
+      );
+      await db.query(
+        `INSERT INTO inventory_stock (id, facility_id, warehouse_id, item_id, batch_no, expiry_date, qty_on_hand, unit_cost)
+         VALUES ($1,$2,$3,$4,$5, current_date + $6::int, $7, $8)`,
+        [stockId, facilityId, whId, itemId, batchNo, expDays, qty, cost],
+      );
+      await db.query(
+        `INSERT INTO inventory_movements (id, facility_id, warehouse_id, item_id, stock_id, movement_type, quantity, reference_type, reason, performed_by)
+         VALUES ($1,$2,$3,$4,$5,'receipt',$6,'initial_stock','رصيد افتتاحي معتمد للمستودع',$7)`,
+        [nextSeedUuid(), facilityId, whId, itemId, stockId, qty, store1],
+      );
+    }
+
+    // Requisitions: 1 issued to Inpatient, 1 pending from Dental awaiting Storekeeper
+    await db.query(
+      `INSERT INTO inventory_requisitions (
+         id, facility_id, req_no, warehouse_id, department_id, item_id,
+         qty_requested, qty_issued, priority, status, notes, requested_by, issued_by, issued_at
+       ) VALUES
+         ($1,$3,'REQ-000001',$4,$6,$8, 15, 15, 'routine', 'issued', 'تزويد جناح التنويم بمستلزمات القثاطر الوريدية الأسبوعية', $10, $12, now() - interval '6 hours'),
+         ($2,$3,'REQ-000002',$5,$7,$9, 4,  0,  'urgent',  'pending', 'احتياج عيادة الأسنان لحشوات كومبوزيت إضافية لجدول الغد', $11, NULL, NULL)`,
+      [
+        nextSeedUuid(), nextSeedUuid(), facilityId,
+        whMain, whDent,
+        deptIds.INP, deptIds.DNT,
+        itemIds['SKU-CNS-002'], itemIds['SKU-DNT-005'],
+        nurse1, dentist, store2,
+      ],
+    );
+
+    // 2. Dental Clinic (عيادة الأسنان) + Panoramic Radiology Order
+    const dentalEncId = nextSeedUuid();
+    await db.query(
+      `INSERT INTO appointments (id, facility_id, appointment_no, patient_id, department_id, doctor_id, scheduled_at, status, reason, created_by)
+       VALUES ($1,$2,'APT-000003',$3,$4,$5, now() - interval '40 minutes', 'in_consultation', 'ألم ضرس خلفي سفلي أيسر وحساسية للبارد', $6)`,
+      [nextSeedUuid(), facilityId, patientIds[1], deptIds.DNT, dentist, userIds['receptionist:reception@demo.hms']],
+    );
+    await db.query(
+      `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
+         status, chief_complaint, started_at, created_by)
+       VALUES ($1,$2,'ENC-000005',$3,'outpatient',$4,$5,'open','ألم نابض في الرحى الأولى السفلية اليسرى (سن 36)', now() - interval '30 minutes', $5)`,
+      [dentalEncId, facilityId, patientIds[1], deptIds.DNT, dentist],
+    );
+
+    // Seed FDI Odontogram entries for MRN-0002 (patientIds[1])
+    await db.query(
+      `INSERT INTO dental_chart_entries (id, facility_id, patient_id, encounter_id, tooth_number, surface, condition, notes, recorded_by)
+       VALUES
+         ($1,$5,$6,$7, 36, 'occlusal', 'caries',     'تسوس عميق بالسطح الإطباقي واصل للب السن يستدعي علاج عصب', $8),
+         ($2,$5,$6,$7, 46, 'occlusal', 'filled',     'حشوة تجميلية سابقة سليمة الحواف', $8),
+         ($3,$5,$6,$7, 16, 'whole',    'root_canal', 'معالجة لبية سابقة مستقرة شعاعيًا', $8),
+         ($4,$5,$6,$7, 28, 'whole',    'extracted',  'ضرس عقل علوي مخلوع سابقًا', $8)`,
+      [nextSeedUuid(), nextSeedUuid(), nextSeedUuid(), nextSeedUuid(), facilityId, patientIds[1], dentalEncId, dentist],
+    );
+
+    await db.query(
+      `INSERT INTO dental_procedures (
+         id, facility_id, procedure_no, patient_id, encounter_id, tooth_number,
+         procedure_code, category, description, anesthesia_used, status, fee,
+         dentist_id, performed_at, clinical_notes, created_by
+       ) VALUES
+         ($1,$3,'DNT-000001',$4,$5, NULL, 'D0120', 'exam',       'فحص شامل للأسنان واللثة وخطة علاجية', NULL, 'completed', 120, $6, now() - interval '20 minutes', 'التهاب لب غير ردود في السن 36 مع لثة سليمة بباقي الأرباع', $6),
+         ($2,$3,'DNT-000002',$4,$5, 36,   'D3330', 'endodontic', 'معالجة لبية لضرس خلفي متعدد القنوات', 'ليدوكائين 2% إحصار عصب سنخي سفلي', 'planned', 950, $6, NULL, 'مجدول لفتح الحجرة اللبية وتنظيف القنوات', $6)`,
+      [nextSeedUuid(), nextSeedUuid(), facilityId, patientIds[1], dentalEncId, dentist],
+    );
+
+    // 3. Radiology (الأشعة) — Seed verified Chest X-Ray + active ER X-Ray + Dental Panoramic
+    const erEnc = await db.query<{ id: string; patient_id: string }>(`SELECT id, patient_id FROM encounters WHERE encounter_no = 'ENC-000002'`);
+    const inpEnc = await db.query<{ id: string; patient_id: string; adm_id: string }>(
+      `SELECT e.id, e.patient_id, a.id AS adm_id
+         FROM encounters e LEFT JOIN admissions a ON a.encounter_id = e.id
+        WHERE e.encounter_no = 'ENC-000003'`,
+    );
+    const surgEnc = await db.query<{ id: string; patient_id: string }>(`SELECT id, patient_id FROM encounters WHERE encounter_no = 'ENC-000004'`);
+
+    if (inpEnc.rows[0]) {
+      const img1 = nextSeedUuid();
+      const rep1 = nextSeedUuid();
+      await db.query(
+        `INSERT INTO imaging_orders (id, facility_id, order_no, encounter_id, patient_id, modality, body_part,
+           clinical_indication, priority, status, ordered_by, ordered_at, performed_by, performed_at)
+         VALUES ($1,$2,'IMG-000001',$3,$4,'xray','الصدر (PA & Lateral)','تقييم احتقان رئوي وحجم الظل القلبي لمريض قصور القلب','routine','verified',
+                 $5, now() - interval '1 day', $6, now() - interval '23 hours')`,
+        [img1, facilityId, inpEnc.rows[0].id, inpEnc.rows[0].patient_id, drAhmed, radTech],
+      );
+      await db.query(
+        `INSERT INTO imaging_reports (id, facility_id, order_id, version, findings, impression, recommendation,
+           is_critical, status, reported_by, reported_at, finalized_by, finalized_at)
+         VALUES ($1,$2,$3,1,'تضخم معتدل بالظل القلبي (CTR 56%) مع احتقان وعائي قاعدي خفيف دون انصباب جنبي كبير',
+                 'علامات احتقان رئوي خفيف متماشية مع قصور القلب المعروف','متابعة الاستجابة لمدرات البول سريريًا',
+                 false,'final',$4, now() - interval '22 hours', $4, now() - interval '22 hours')`,
+        [rep1, facilityId, img1, radiologist],
+      );
+    }
+
+    if (erEnc.rows[0]) {
+      await db.query(
+        `INSERT INTO imaging_orders (id, facility_id, order_no, encounter_id, patient_id, modality, body_part,
+           clinical_indication, priority, status, ordered_by, ordered_at, performed_by, performed_at)
+         VALUES ($1,$2,'IMG-000002',$3,$4,'xray','الصدر (Portable AP)','ألم صدري حاد بالطوارئ لاستبعاد استرواح الصدر أو التوسع المنصفي','urgent','performed',
+                 $5, now() - interval '25 minutes', $6, now() - interval '12 minutes')`,
+        [nextSeedUuid(), facilityId, erEnc.rows[0].id, erEnc.rows[0].patient_id, drSara, radTech],
+      );
+
+      // Active Lab worklist order on ER patient (LAB-000002)
+      const erLabOrder = nextSeedUuid();
+      await db.query(
+        `INSERT INTO lab_orders (id, facility_id, order_no, patient_id, encounter_id, ordered_by, ordered_at, priority, status)
+         VALUES ($1,$2,'LAB-000002',$3,$4,$5, now() - interval '28 minutes', 'stat', 'collected')`,
+        [erLabOrder, facilityId, erEnc.rows[0].patient_id, erEnc.rows[0].id, drSara],
+      );
+      await db.query(
+        `INSERT INTO lab_order_items (id, facility_id, order_id, test_code, status, specimen_barcode, collected_by, collected_at, price)
+         VALUES
+           ($1,$3,$4,'2160-0','collected','SPC-LAB-000002-CREA',$5, now() - interval '18 minutes', 25),
+           ($2,$3,$4,'718-7', 'ordered',  NULL, NULL, NULL, 25)`,
+        [nextSeedUuid(), nextSeedUuid(), facilityId, erLabOrder, labTech1],
+      );
+    }
+
+    await db.query(
+      `INSERT INTO imaging_orders (id, facility_id, order_no, encounter_id, patient_id, modality, body_part,
+         clinical_indication, priority, status, ordered_by, ordered_at)
+       VALUES ($1,$2,'IMG-000003',$3,$4,'panoramic','الفكين والأسنان (OPG)','تقييم جذور السن 36 وعلاقتها بالقناة السنخية السفلية قبل علاج العصب','routine','ordered',
+               $5, now() - interval '15 minutes')`,
+      [nextSeedUuid(), facilityId, dentalEncId, patientIds[1], dentist],
+    );
+
+    // 4. Physical Therapy & Rehabilitation (العلاج الطبيعي)
+    if (inpEnc.rows[0]) {
+      const ptRef1 = nextSeedUuid();
+      await db.query(
+        `INSERT INTO physio_referrals (
+           id, facility_id, referral_no, patient_id, encounter_id, admission_id,
+           diagnosis_summary, body_region, modality_plan, precautions,
+           total_sessions, completed_sessions, priority, status,
+           referred_by, assigned_therapist_id, initial_assessment, rehab_goals,
+           baseline_pain_score, baseline_mobility_score, assessed_at
+         ) VALUES (
+           $1,$2,'PTR-000001',$3,$4,$5,
+           'ضعف تحمّل الجهد وتيبس عضلي مكتسب بالتنويم لدى مريض قصور قلب',
+           'الصدر والأطراف السفلية', 'chest_physio',
+           'مراقبة SpO2 ونبض القلب؛ إيقاف التمرين إذا تجاوز النبض 115 أو نزل التشبع عن 92%',
+           6, 1, 'urgent', 'active',
+           $6, $7,
+           'قوة الأطراف السفلية 4/5 على مقياس MRC، نهجان خفيف عند الجلوس على حافة السرير',
+           'استعادة المشي المستقل لمسافة 50 مترًا وتحسين كفاءة التنفس الحجابي خلال أسبوعين',
+           6, 4, now() - interval '1 day'
+         )`,
+        [ptRef1, facilityId, inpEnc.rows[0].patient_id, inpEnc.rows[0].id, inpEnc.rows[0].adm_id, drAhmed, physio],
+      );
+      await db.query(
+        `INSERT INTO physio_sessions (
+           id, facility_id, session_no, referral_id, patient_id, session_number,
+           scheduled_at, duration_minutes, modalities_performed,
+           pain_before, pain_after, rom_notes, patient_tolerance, progress_notes,
+           status, fee, therapist_id, performed_at
+         ) VALUES
+           ($1,$3,'PTS-000001',$4,$5, 1, now() - interval '20 hours', 40, '{chest_physio,therapeutic_exercise}',
+            6, 3, 'تمارين تنفس عميق وتحريك فاعل للكاحلين والركبتين (MRC 4/5)', 'good',
+            'تحسن تشبع الأكسجين من 93% إلى 96% وانخفاض التيبس العضلي', 'completed', 180, $6, now() - interval '19 hours'),
+           ($2,$3,'PTS-000002',$4,$5, 2, now() + interval '3 hours',  45, '{}',
+            NULL, NULL, NULL, NULL, NULL, 'scheduled', 180, $6, NULL)`,
+        [nextSeedUuid(), nextSeedUuid(), facilityId, ptRef1, inpEnc.rows[0].patient_id, physio],
+      );
+    }
+
+    if (surgEnc.rows[0]) {
+      await db.query(
+        `INSERT INTO physio_referrals (
+           id, facility_id, referral_no, patient_id, encounter_id,
+           diagnosis_summary, body_region, modality_plan, precautions,
+           total_sessions, completed_sessions, priority, status, referred_by
+         ) VALUES (
+           $1,$2,'PTR-000002',$3,$4,
+           'تأهيل تنفسي وحركي مبكر ما بعد جراحة استئصال المرارة بالمنظار',
+           'البطن والجهاز التنفسي', 'post_op_rehab',
+           'تثبيت موضع الجروح بالوسادة أثناء السعال وتمارين التنفس',
+           4, 0, 'routine', 'referred', $5
+         )`,
+        [nextSeedUuid(), facilityId, surgEnc.rows[0].patient_id, surgEnc.rows[0].id, surgeonUser],
       );
     }
   }
@@ -1200,6 +1480,10 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['cssd_load', 'cssd_sterilization_loads', 'load_no', 'CSL'],
     ['hr_employee', 'hr_employees', 'employee_no', 'EMP'],
     ['hr_leave', 'hr_leave_requests', 'request_no', 'LVR'],
+    ['inv_req', 'inventory_requisitions', 'req_no', 'REQ'],
+    ['dental_proc', 'dental_procedures', 'procedure_no', 'DNT'],
+    ['physio_ref', 'physio_referrals', 'referral_no', 'PTR'],
+    ['physio_sess', 'physio_sessions', 'session_no', 'PTS'],
   ];
   for (const [name, table, column, prefix] of sequenceSources) {
     const max = await db.query<{ next: number }>(

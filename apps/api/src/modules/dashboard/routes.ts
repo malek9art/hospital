@@ -85,7 +85,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
              (SELECT count(*)::int FROM cssd_packs WHERE facility_id = $1 AND status IN ('quarantined','recalled')) AS quarantined_packs,
              (SELECT count(*)::int FROM infection_cases WHERE facility_id = $1 AND status = 'suspected') AS suspected_infections,
              (SELECT count(*)::int FROM invoices WHERE facility_id = $1 AND status IN ('open','partially_paid')) AS open_invoices,
-             (SELECT count(*)::int FROM hr_credentials WHERE facility_id = $1 AND status = 'verified' AND expiry_date BETWEEN current_date AND current_date + 30) AS expiring_credentials`,
+             (SELECT count(*)::int FROM hr_credentials WHERE facility_id = $1 AND status = 'verified' AND expiry_date BETWEEN current_date AND current_date + 30) AS expiring_credentials,
+             (SELECT count(*)::int FROM (
+                SELECT i.id
+                  FROM inventory_items i
+                  LEFT JOIN inventory_stock s ON s.item_id = i.id AND (s.expiry_date IS NULL OR s.expiry_date >= current_date)
+                 WHERE i.facility_id = $1 AND i.is_active = true
+                 GROUP BY i.id, i.reorder_level
+                HAVING COALESCE(SUM(s.qty_on_hand), 0) <= i.reorder_level
+             ) low_items) AS low_inventory,
+             (SELECT count(*)::int FROM inventory_requisitions WHERE facility_id = $1 AND status = 'pending') AS pending_store_reqs,
+             (SELECT count(*)::int FROM physio_referrals WHERE facility_id = $1 AND status = 'referred') AS pending_physio`,
           [auth.activeFacilityId],
         ),
       ]);
@@ -103,6 +113,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const pendingRx = Number(row.pending_prescriptions ?? 0);
       const openInvoices = Number(ex.open_invoices ?? 0);
       const expiringCredentials = Number(ex.expiring_credentials ?? 0);
+      const lowInventory = Number(ex.low_inventory ?? 0);
+      const pendingStoreReqs = Number(ex.pending_store_reqs ?? 0);
+      const pendingPhysio = Number(ex.pending_physio ?? 0);
 
       const actionableAlerts = [
         criticalLabCount > 0 && {
@@ -111,7 +124,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           count: criticalLabCount,
           severity: 'danger',
           route: '#/lab',
-          perm: 'lab.sample.collect',
+          perm: 'lab.critical.ack',
         },
         criticalImgCount > 0 && {
           key: 'critical_imaging',
@@ -136,6 +149,30 @@ export async function dashboardRoutes(app: FastifyInstance) {
           severity: 'warning',
           route: '#/cssd',
           perm: 'infection.read',
+        },
+        lowInventory > 0 && {
+          key: 'low_inventory',
+          title: 'أصناف مخزنية دون حد إعادة الطلب',
+          count: lowInventory,
+          severity: 'warning',
+          route: '#/inventory',
+          perm: 'inventory.read',
+        },
+        pendingStoreReqs > 0 && {
+          key: 'pending_store_reqs',
+          title: 'طلبات صرف مخزني للأقسام بانتظار التجهيز',
+          count: pendingStoreReqs,
+          severity: 'info',
+          route: '#/inventory',
+          perm: 'inventory.read',
+        },
+        pendingPhysio > 0 && {
+          key: 'pending_physio',
+          title: 'تحويلات علاج طبيعي بانتظار التقييم',
+          count: pendingPhysio,
+          severity: 'info',
+          route: '#/physiotherapy',
+          perm: 'physio.read',
         },
         expiringBatches > 0 && {
           key: 'expiring_drugs',

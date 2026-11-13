@@ -3396,7 +3396,7 @@ describe('login resilience, session envelope security & Supabase bootstrap bundl
     expect(meTampered.statusCode).toBe(401);
   });
 
-  it('validates db/supabase-full-init.sql execution, 29 demo users, URL encoding, and PostgREST anon lockdown', async () => {
+  it('validates db/supabase-full-init.sql execution, 33 demo users, URL encoding, and PostgREST anon lockdown', async () => {
     const fs = await import('node:fs');
     const path = await import('node:path');
     const { PGlite } = await import('@electric-sql/pglite');
@@ -3432,19 +3432,28 @@ describe('login resilience, session envelope security & Supabase bootstrap bundl
 
       await pg.exec(bundleSql);
 
-      // Verify all 19 migrations + 29 demo users + 2 facilities + 25 roles + 98 permissions are loaded
+      // Verify all 20 migrations + 33 demo users + 30 departments + 28 roles + 110 permissions are loaded
       const migs = await pg.query<{ count: string }>('SELECT count(*) FROM public.schema_migrations');
-      expect(Number(migs.rows[0].count)).toBe(19);
+      expect(Number(migs.rows[0].count)).toBe(20);
       const users = await pg.query<{ count: string }>('SELECT count(*) FROM public.users');
-      expect(Number(users.rows[0].count)).toBe(29);
+      expect(Number(users.rows[0].count)).toBe(33);
       const roles = await pg.query<{ count: string }>('SELECT count(*) FROM public.roles');
-      expect(Number(roles.rows[0].count)).toBe(25);
+      expect(Number(roles.rows[0].count)).toBe(28);
       const perms = await pg.query<{ count: string }>('SELECT count(*) FROM public.permissions');
-      expect(Number(perms.rows[0].count)).toBe(99);
+      expect(Number(perms.rows[0].count)).toBe(110);
+      const depts = await pg.query<{ count: string }>('SELECT count(*) FROM public.departments');
+      expect(Number(depts.rows[0].count)).toBe(30);
+      const whs = await pg.query<{ count: string }>('SELECT count(*) FROM public.inventory_warehouses');
+      expect(Number(whs.rows[0].count)).toBeGreaterThanOrEqual(4);
 
-      // Verify anon role is strictly denied SELECT on users, sessions, and patients
+      // Verify anon role is strictly denied SELECT on users, inventory, dental, and physio tables
       await expect(
         pg.exec('BEGIN; SET LOCAL ROLE anon; SELECT count(*) FROM public.users; COMMIT;'),
+      ).rejects.toThrow(/permission denied/i);
+      await pg.exec('ROLLBACK').catch(() => undefined);
+
+      await expect(
+        pg.exec('BEGIN; SET LOCAL ROLE anon; SELECT count(*) FROM public.inventory_warehouses; COMMIT;'),
       ).rejects.toThrow(/permission denied/i);
       await pg.exec('ROLLBACK').catch(() => undefined);
 
@@ -3454,6 +3463,301 @@ describe('login resilience, session envelope security & Supabase bootstrap bundl
       await pg.close();
     }
   });
+
+  it('verifies all 6 clinical/operational departments, Medical Stores FEFO + SoD, Dental FDI + panoramic OPG, Physiotherapy VAS + billing, and Lab/Radiology/Reports upgrades', async () => {
+    async function loginFromIp(email: string, password: string, name: string, ip: string): Promise<Agent> {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        remoteAddress: ip,
+        payload: { email, password },
+      });
+      if (res.statusCode !== 200) throw new Error(`login ${email} failed: ${res.statusCode} ${res.body}`);
+      const cookie = res.cookies.find((c: any) => c.name === 'hms_session');
+      const cookies = { hms_session: cookie.value };
+      const meRes = await app.inject({ method: 'GET', url: '/api/auth/me', cookies });
+      const me = meRes.json();
+      return { name, cookies, csrf: me.csrfToken, me };
+    }
+
+    const stores1 = await loginFromIp('stores@demo.hms', 'Store#Demo2026', 'stores1', '10.99.1.1');
+    const stores2 = await loginFromIp('stores2@demo.hms', 'Store#Demo2026', 'stores2', '10.99.1.2');
+    const dentist = await loginFromIp('dentist@demo.hms', 'Dental#Demo2026', 'dentist', '10.99.1.3');
+    const physio = await loginFromIp('physio@demo.hms', 'Physio#Demo2026', 'physio', '10.99.1.4');
+
+    // 0. Verify all 6 departments exist in bootstrap & honest module statuses include our 6 departments
+    const boot = await expectStatus(await call(agents.doctor, 'GET', '/api/meta/bootstrap'), 200, 'bootstrap');
+    const deptCodes = new Set((boot.departments as any[]).map((d) => d.code));
+    for (const code of ['STR', 'RAD', 'DNT', 'LAB', 'BBK', 'PT']) {
+      expect(deptCodes.has(code)).toBe(true);
+    }
+    const mods = await expectStatus(await call(agents.doctor, 'GET', '/api/meta/modules'), 200, 'modules');
+    expect(mods.modules.every((m: any) => 'missing' in m)).toBe(true);
+    for (const key of ['labs', 'bloodbank', 'dental', 'physiotherapy', 'procurement', 'radiology_orders']) {
+      const found = (mods.modules as any[]).find((m) => m.key === key);
+      expect(found?.status).toBe('implemented');
+    }
+
+    // 1. Medical Stores (المخازن): least-privilege RBAC + FEFO + SoD + immutable movements
+    const storesPatientDenied = await call(stores1, 'GET', '/api/patients');
+    expect(storesPatientDenied.statusCode).toBe(403);
+
+    const invBoard = await expectStatus(await call(stores1, 'GET', '/api/inventory/board'), 200, 'invBoard');
+    expect(invBoard.warehouses.length).toBe(3); // RLS isolates JED branch warehouse!
+    expect(invBoard.items.length).toBeGreaterThanOrEqual(6);
+    const mainWh = invBoard.warehouses[0];
+    const dentalDept = (boot.departments as any[]).find((d) => d.code === 'DNT');
+
+    const createdItem = await expectStatus(
+      await call(stores1, 'POST', '/api/inventory/items', {
+        sku: 'TST-FEFO-MASK',
+        nameAr: 'كمامات جراحية اختبار FEFO',
+        nameEn: 'Surgical Masks FEFO Test',
+        category: 'ppe',
+        unit: 'علبة',
+        reorderLevel: 10,
+        unitCost: 18,
+      }),
+      201,
+      'createInvItem',
+    );
+
+    // Receive later-expiring batch first, then earlier-expiring batch
+    await expectStatus(
+      await call(stores1, 'POST', '/api/inventory/stock/receive', {
+        warehouseId: mainWh.id,
+        itemId: createdItem.id,
+        batchNo: 'LOT-LATE-2028',
+        expiryDate: '2028-06-01',
+        quantity: 20,
+      }),
+      201,
+      'receiveLate',
+    );
+    await expectStatus(
+      await call(stores1, 'POST', '/api/inventory/stock/receive', {
+        warehouseId: mainWh.id,
+        itemId: createdItem.id,
+        batchNo: 'LOT-EARLY-2027',
+        expiryDate: '2027-02-15',
+        quantity: 12,
+      }),
+      201,
+      'receiveEarly',
+    );
+
+    const reqCreated = await expectStatus(
+      await call(stores1, 'POST', '/api/inventory/requisitions', {
+        warehouseId: mainWh.id,
+        departmentId: dentalDept.id,
+        itemId: createdItem.id,
+        qtyRequested: 15,
+        priority: 'urgent',
+        notes: 'تزويد عاجل لعيادة الأسنان',
+      }),
+      201,
+      'createReq',
+    );
+
+    // SoD: stores1 cannot issue their own requisition
+    const selfIssue = await call(stores1, 'POST', `/api/inventory/requisitions/${reqCreated.id}/issue`, {});
+    expect(selfIssue.statusCode).toBe(409);
+
+    // stores2 issues requisition -> FEFO takes all 12 from LOT-EARLY-2027 and 3 from LOT-LATE-2028
+    const issued = await expectStatus(
+      await call(stores2, 'POST', `/api/inventory/requisitions/${reqCreated.id}/issue`, {}),
+      200,
+      'issueReq',
+    );
+    expect(issued.batches).toEqual([
+      expect.objectContaining({ batchNo: 'LOT-EARLY-2027', quantity: 12 }),
+      expect.objectContaining({ batchNo: 'LOT-LATE-2028', quantity: 3 }),
+    ]);
+
+    // DB trigger: inventory_movements is strictly append-only
+    await expect(db.query(`DELETE FROM inventory_movements WHERE item_id = $1`, [createdItem.id])).rejects.toThrow(
+      /append-only/i,
+    );
+
+    // 2. Dental Clinic (عيادة الأسنان) + Radiology Panoramic & Verified Addendum (الأشعة)
+    const dentalEnc = await expectStatus(
+      await call(dentist, 'POST', '/api/encounters', {
+        patientId: patient1.id,
+        encounterType: 'outpatient',
+        departmentId: dentalDept.id,
+        chiefComplaint: 'ألم بالرحى الأولى السفلية اليسرى #36',
+      }),
+      201,
+      'dentalEnc',
+    );
+
+    // Invalid FDI tooth 19 must be rejected with 400
+    const badTooth = await call(dentist, 'POST', '/api/dental/odontogram', {
+      patientId: patient1.id,
+      encounterId: dentalEnc.id,
+      toothNumber: 19,
+      surface: 'occlusal',
+      condition: 'caries',
+    });
+    expect(badTooth.statusCode).toBe(400);
+
+    await expectStatus(
+      await call(dentist, 'POST', '/api/dental/odontogram', {
+        patientId: patient1.id,
+        encounterId: dentalEnc.id,
+        toothNumber: 36,
+        surface: 'occlusal',
+        condition: 'caries',
+        notes: 'تسوس إطباقي عميق بالسن 36',
+      }),
+      201,
+      'dentalChart',
+    );
+
+    const dentalProc = await expectStatus(
+      await call(dentist, 'POST', '/api/dental/procedures', {
+        encounterId: dentalEnc.id,
+        toothNumber: 36,
+        procedureCode: 'D2391',
+        category: 'restorative',
+        description: 'حشوة تجميلية ضوئية كومبوزيت (سطح واحد)',
+        anesthesiaUsed: 'Articaine 4% 1.7ml',
+        fee: 320,
+      }),
+      201,
+      'dentalProcCreate',
+    );
+
+    const completedDental = await expectStatus(
+      await call(dentist, 'POST', `/api/dental/procedures/${dentalProc.id}/complete`, {
+        clinicalNotes: 'أُزيل التسوس ووُضعت الحشوة التجميلية بنجاح',
+      }),
+      200,
+      'dentalProcComplete',
+    );
+    expect(completedDental.invoiceId).toBeTruthy();
+
+    const patientChart = await expectStatus(
+      await call(dentist, 'GET', `/api/dental/patients/${patient1.id}`),
+      200,
+      'dentalPatientChart',
+    );
+    expect(patientChart.toothMap[36]?.condition).toBe('filled');
+
+    // Order Panoramic OPG X-Ray from dental encounter -> perform -> report -> verify -> addendum v2!
+    const panoOrder = await expectStatus(
+      await call(dentist, 'POST', '/api/radiology/orders', {
+        encounterId: dentalEnc.id,
+        modality: 'panoramic',
+        bodyPart: 'الفكين والأسنان (OPG)',
+        priority: 'routine',
+        clinicalIndication: 'تقييم الجذور وأضراس العقل عبر بانوراما الأسنان',
+      }),
+      201,
+      'panoOrder',
+    );
+    await expectStatus(await call(agents.radTech, 'POST', `/api/radiology/orders/${panoOrder.id}/perform`, {}), 200, 'panoPerform');
+    const rptV1 = await expectStatus(
+      await call(agents.radiologist, 'POST', `/api/radiology/orders/${panoOrder.id}/reports`, {
+        findings: 'انتظام القوس السني وسلامة العظم السنخي حول السن 36',
+        impression: 'بانوراما سنية ضمن الحدود الطبيعية بعد الترميم',
+      }),
+      201,
+      'panoRptV1',
+    );
+    await expectStatus(await call(agents.radiologist, 'POST', `/api/radiology/reports/${rptV1.id}/finalize`, {}), 200, 'panoFinalizeV1');
+
+    // Verified order addendum (version 2)
+    const rptV2 = await expectStatus(
+      await call(agents.radiologist, 'POST', `/api/radiology/orders/${panoOrder.id}/reports`, {
+        findings: 'ملحق إشعاعي: انطمار جزئي غير عرضي لضرس العقل 48',
+        impression: 'يُنصح بالمتابعة الدورية لضرس العقل السفلي الأيمن',
+      }),
+      201,
+      'panoAddendumV2',
+    );
+    expect(rptV2.version).toBe(2);
+    await expectStatus(await call(agents.radiologist, 'POST', `/api/radiology/reports/${rptV2.id}/finalize`, {}), 200, 'panoFinalizeV2');
+
+    // 3. Physiotherapy (العلاج الطبيعي والتأهيل)
+    const ptRef = await expectStatus(
+      await call(agents.doctor, 'POST', '/api/physio/referrals', {
+        encounterId: dentalEnc.id,
+        diagnosisSummary: 'تشنج عضلات المفصل الصدغي الفكي والرقبة (TMJ & Cervical Myofascial Pain)',
+        bodyRegion: 'المفصل الصدغي الفكي والفقرات العنقية',
+        modalityPlan: 'manual_therapy',
+        totalSessions: 2,
+        priority: 'urgent',
+      }),
+      201,
+      'physioRefer',
+    );
+
+    await expectStatus(
+      await call(physio, 'POST', `/api/physio/referrals/${ptRef.id}/assess`, {
+        initialAssessment: 'تحدد في فتح الفم مع تيبس عضلي عنقي واضح',
+        rehabGoals: 'تخفيف الألم من 8 إلى أقل من 3 واستعادة المدى الحركي الكامل',
+        baselinePainScore: 8,
+        baselineMobilityScore: 4,
+      }),
+      200,
+      'physioAssess',
+    );
+
+    for (const [before, after] of [
+      [8, 5],
+      [5, 2],
+    ] as const) {
+      const sess = await expectStatus(
+        await call(physio, 'POST', `/api/physio/referrals/${ptRef.id}/sessions`, {
+          durationMinutes: 45,
+          fee: 180,
+        }),
+        201,
+        'physioScheduleSession',
+      );
+      const done = await expectStatus(
+        await call(physio, 'POST', `/api/physio/sessions/${sess.id}/complete`, {
+          modalitiesPerformed: ['manual_therapy', 'therapeutic_exercise'],
+          painBefore: before,
+          painAfter: after,
+          romNotes: 'تحسن واضح في مدى الحركة العنقية والمفصلية',
+          patientTolerance: 'excellent',
+          progressNotes: 'استجابة ممتازة وانخفاض تدريجي في الألم العضلي',
+        }),
+        200,
+        'physioCompleteSession',
+      );
+      expect(done.invoiceId).toBeTruthy();
+    }
+
+    const ptDetail = await expectStatus(await call(physio, 'GET', `/api/physio/referrals/${ptRef.id}`), 200, 'physioDetail');
+    expect(ptDetail.referral.status).toBe('completed');
+    expect(Number(ptDetail.referral.completed_sessions)).toBe(2);
+
+    // 4. Lab Supervisor Worklist + Amendment + Blood Bank + Filtered Reports Catalog
+    const lab2Wl = await expectStatus(await call(agents.lab2, 'GET', '/api/lab/worklist?status=all'), 200, 'lab2Wl');
+    expect(Array.isArray(lab2Wl.items)).toBe(true);
+    expect(lab2Wl.items.length).toBeGreaterThan(0);
+    const verifiedLabItem = (lab2Wl.items as any[]).find((it) => it.status === 'verified' && it.result_id);
+    expect(verifiedLabItem).toBeTruthy();
+    await expectStatus(
+      await call(agents.lab2, 'POST', `/api/lab/results/${verifiedLabItem.result_id}/amend`, {
+        valueNumeric: 13.4,
+        reason: 'إعادة معايرة جهاز التحليل الدموي وتكرار القياس على العينة ذاتها',
+      }),
+      200,
+      'lab2Amend',
+    );
+
+    const bbStock = await expectStatus(await call(agents.bloodTech, 'GET', '/api/bloodbank/stock'), 200, 'bbStock');
+    expect(bbStock.units.length).toBeGreaterThan(0);
+
+    const docReports = await expectStatus(await call(agents.doctor, 'GET', '/api/reports'), 200, 'docReports');
+    expect((docReports.reports as any[]).some((r) => r.key === 'visits')).toBe(true);
+    expect((docReports.reports as any[]).some((r) => r.key === 'revenue')).toBe(false);
+  });
 });
+
 
 

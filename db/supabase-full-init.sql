@@ -2,9 +2,9 @@
 -- HMS Enterprise — Complete 1-Click Supabase SQL Editor Bootstrap
 -- Project : https://pxawcoccgcuzoustyugh.supabase.co
 -- Pooler  : aws-0-ap-northeast-2.pooler.supabase.com:5432 (user: postgres.pxawcoccgcuzoustyugh)
--- Includes: All 19 migrations (89 tables + RLS + PostgREST anon lockdown)
---           + 2 facilities, 8 departments, 25 roles, 98 permissions,
---           + ALL 29 demo login accounts (Argon2id), wards/beds, lab tests, drugs & CSSD sets.
+-- Includes: All 20 migrations (98 tables + RLS + PostgREST anon lockdown)
+--           + 2 facilities, 30 departments (15 per facility), 28 roles, 110 permissions,
+--           + ALL 33 demo login accounts (Argon2id), wards/beds, lab tests, drugs, CSSD & Stores.
 --
 -- Paste into: https://supabase.com/dashboard/project/pxawcoccgcuzoustyugh/sql/new -> Run
 -- ============================================================================
@@ -2849,33 +2849,464 @@ INSERT INTO public.schema_migrations (filename, checksum)
 VALUES ('019_supabase_hardening.sql', 'e1ca43696f30d8cb1886d61eae00f0d308cbdd49575e5d4753985cda24e8d02e')
 ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum;
 
+-- ----------------------------------------------------------------------------
+-- Migration: 020_stores_dental_physio.sql (sha256: 667effc70ef6225e1ecaf2513d84e08536922ba5ecedc401e81518574fb9ab86)
+-- ----------------------------------------------------------------------------
+-- ============================================================================
+-- 020_stores_dental_physio.sql
+-- Medical Stores & Warehouses (المخازن), Dental Clinic (عيادة الأسنان),
+-- Physical Therapy & Rehabilitation (العلاج الطبيعي), and Department/Radiology
+-- expansions.
+--
+-- Safety & Governance invariants:
+--  * Tenant-isolated via Row-Level Security (FORCE ROW LEVEL SECURITY) on facility_id.
+--  * Separation of duties on warehouse stock requisitions (issued_by <> requested_by).
+--  * Append-only inventory_movements & dental_chart_entries (medical/financial ledger).
+--  * Completed/cancelled requisitions, dental procedures, physio referrals, and
+--    physio sessions are immutable; no record may be deleted.
+-- ============================================================================
+
+-- Expand department types to cover stores, dental, physiotherapy, blood bank, cssd, nutrition
+ALTER TABLE departments DROP CONSTRAINT IF EXISTS departments_dept_type_check;
+ALTER TABLE departments ADD CONSTRAINT departments_dept_type_check
+  CHECK (dept_type IN (
+    'outpatient','emergency','inpatient','icu','lab','radiology','pharmacy',
+    'administration','surgery','anesthesia','stores','dental','physiotherapy',
+    'bloodbank','cssd','nutrition','other'
+  ));
+
+-- Expand imaging modalities to support Dental Panoramic (OPG) radiographs
+ALTER TABLE imaging_orders DROP CONSTRAINT IF EXISTS imaging_orders_modality_check;
+ALTER TABLE imaging_orders ADD CONSTRAINT imaging_orders_modality_check
+  CHECK (modality IN ('xray','ct','mri','us','mammography','fluoroscopy','panoramic'));
 
 -- ============================================================================
--- Operational & Authentication Seed (29 Demo Accounts + Reference Catalog)
+-- 1. Medical Stores & Warehouses (المخازن والإمداد الطبي)
+-- ============================================================================
+
+CREATE TABLE inventory_warehouses (
+  id             uuid PRIMARY KEY,
+  facility_id    uuid NOT NULL REFERENCES facilities(id),
+  code           text NOT NULL,
+  name_ar        text NOT NULL,
+  name_en        text,
+  warehouse_type text NOT NULL CHECK (warehouse_type IN (
+    'main','medical_supplies','surgical','dental','lab','rehab','general'
+  )),
+  department_id  uuid REFERENCES departments(id),
+  is_active      boolean NOT NULL DEFAULT true,
+  created_by     uuid NOT NULL REFERENCES users(id),
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (facility_id, code)
+);
+
+CREATE TABLE inventory_items (
+  id            uuid PRIMARY KEY,
+  facility_id   uuid NOT NULL REFERENCES facilities(id),
+  sku           text NOT NULL,
+  name_ar       text NOT NULL,
+  name_en       text,
+  category      text NOT NULL CHECK (category IN (
+    'consumables','ppe','surgical_supplies','lab_reagents',
+    'dental_supplies','physio_supplies','radiology_supplies','general'
+  )),
+  unit          text NOT NULL DEFAULT 'قطعة',
+  reorder_level numeric(12,2) NOT NULL DEFAULT 10 CHECK (reorder_level >= 0),
+  unit_cost     numeric(12,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
+  is_active     boolean NOT NULL DEFAULT true,
+  created_by    uuid NOT NULL REFERENCES users(id),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (facility_id, sku)
+);
+CREATE INDEX inventory_items_facility_cat_idx ON inventory_items (facility_id, category);
+
+CREATE TABLE inventory_stock (
+  id           uuid PRIMARY KEY,
+  facility_id  uuid NOT NULL REFERENCES facilities(id),
+  warehouse_id uuid NOT NULL REFERENCES inventory_warehouses(id),
+  item_id      uuid NOT NULL REFERENCES inventory_items(id),
+  batch_no     text NOT NULL,
+  expiry_date  date,
+  qty_on_hand  numeric(12,2) NOT NULL DEFAULT 0 CHECK (qty_on_hand >= 0),
+  unit_cost    numeric(12,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
+  received_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (warehouse_id, item_id, batch_no)
+);
+CREATE INDEX inventory_stock_fefo_idx ON inventory_stock (facility_id, warehouse_id, item_id, expiry_date);
+
+CREATE TABLE inventory_requisitions (
+  id            uuid PRIMARY KEY,
+  facility_id   uuid NOT NULL REFERENCES facilities(id),
+  req_no        text NOT NULL,
+  warehouse_id  uuid NOT NULL REFERENCES inventory_warehouses(id),
+  department_id uuid NOT NULL REFERENCES departments(id),
+  item_id       uuid NOT NULL REFERENCES inventory_items(id),
+  qty_requested numeric(12,2) NOT NULL CHECK (qty_requested > 0),
+  qty_issued    numeric(12,2) NOT NULL DEFAULT 0 CHECK (qty_issued >= 0),
+  priority      text NOT NULL DEFAULT 'routine' CHECK (priority IN ('routine','urgent','stat')),
+  status        text NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','issued','rejected','cancelled')),
+  notes         text,
+  requested_by  uuid NOT NULL REFERENCES users(id),
+  issued_by     uuid REFERENCES users(id),
+  issued_at     timestamptz,
+  reject_reason text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (facility_id, req_no),
+  CHECK (issued_by IS NULL OR issued_by <> requested_by),
+  CHECK (status <> 'rejected' OR (reject_reason IS NOT NULL AND length(reject_reason) >= 5))
+);
+CREATE INDEX inventory_requisitions_board_idx ON inventory_requisitions (facility_id, status, created_at DESC);
+
+CREATE TABLE inventory_movements (
+  id             uuid PRIMARY KEY,
+  facility_id    uuid NOT NULL REFERENCES facilities(id),
+  warehouse_id   uuid NOT NULL REFERENCES inventory_warehouses(id),
+  item_id        uuid NOT NULL REFERENCES inventory_items(id),
+  stock_id       uuid REFERENCES inventory_stock(id),
+  movement_type  text NOT NULL CHECK (movement_type IN ('receipt','issue','adjustment','transfer_in','transfer_out')),
+  quantity       numeric(12,2) NOT NULL CHECK (quantity <> 0),
+  reference_type text,
+  reference_id   text,
+  reason         text,
+  performed_by   uuid NOT NULL REFERENCES users(id),
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX inventory_movements_facility_idx ON inventory_movements (facility_id, created_at DESC);
+
+CREATE OR REPLACE FUNCTION inventory_movements_append_only_fn() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'inventory movements ledger is append-only' USING ERRCODE = '42501';
+END $$;
+
+CREATE TRIGGER inventory_movements_append_only
+  BEFORE UPDATE OR DELETE ON inventory_movements
+  FOR EACH ROW EXECUTE FUNCTION inventory_movements_append_only_fn();
+
+CREATE OR REPLACE FUNCTION inventory_requisitions_guard_fn() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'inventory requisitions cannot be deleted' USING ERRCODE = '42501';
+  END IF;
+  IF OLD.status <> 'pending' THEN
+    RAISE EXCEPTION 'processed inventory requisitions are immutable' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.issued_by IS NOT NULL AND NEW.issued_by = OLD.requested_by THEN
+    RAISE EXCEPTION 'requester cannot self-issue warehouse requisition' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER inventory_requisitions_guard
+  BEFORE UPDATE OR DELETE ON inventory_requisitions
+  FOR EACH ROW EXECUTE FUNCTION inventory_requisitions_guard_fn();
+
+-- ============================================================================
+-- 2. Dental Clinic & FDI Odontogram (عيادة الأسنان والفم)
+-- ============================================================================
+
+CREATE TABLE dental_chart_entries (
+  id           uuid PRIMARY KEY,
+  facility_id  uuid NOT NULL REFERENCES facilities(id),
+  patient_id   uuid NOT NULL REFERENCES patients(id),
+  encounter_id uuid REFERENCES encounters(id),
+  tooth_number integer NOT NULL CHECK (tooth_number IN (
+    11,12,13,14,15,16,17,18,
+    21,22,23,24,25,26,27,28,
+    31,32,33,34,35,36,37,38,
+    41,42,43,44,45,46,47,48,
+    51,52,53,54,55,
+    61,62,63,64,65,
+    71,72,73,74,75,
+    81,82,83,84,85
+  )),
+  surface      text NOT NULL DEFAULT 'whole' CHECK (surface IN (
+    'whole','occlusal','mesial','distal','buccal','lingual','incisal'
+  )),
+  condition    text NOT NULL CHECK (condition IN (
+    'healthy','caries','filled','crown','root_canal','missing','extracted','implant','fracture','periodontal'
+  )),
+  notes        text,
+  recorded_by  uuid NOT NULL REFERENCES users(id),
+  recorded_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX dental_chart_patient_idx ON dental_chart_entries (patient_id, recorded_at DESC);
+
+CREATE OR REPLACE FUNCTION dental_chart_append_only_fn() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'dental odontogram entries are append-only medical records' USING ERRCODE = '42501';
+END $$;
+
+CREATE TRIGGER dental_chart_append_only
+  BEFORE UPDATE OR DELETE ON dental_chart_entries
+  FOR EACH ROW EXECUTE FUNCTION dental_chart_append_only_fn();
+
+CREATE TABLE dental_procedures (
+  id              uuid PRIMARY KEY,
+  facility_id     uuid NOT NULL REFERENCES facilities(id),
+  procedure_no    text NOT NULL,
+  patient_id      uuid NOT NULL REFERENCES patients(id),
+  encounter_id    uuid NOT NULL REFERENCES encounters(id),
+  tooth_number    integer CHECK (tooth_number IS NULL OR tooth_number IN (
+    11,12,13,14,15,16,17,18,
+    21,22,23,24,25,26,27,28,
+    31,32,33,34,35,36,37,38,
+    41,42,43,44,45,46,47,48,
+    51,52,53,54,55,
+    61,62,63,64,65,
+    71,72,73,74,75,
+    81,82,83,84,85
+  )),
+  procedure_code  text NOT NULL,
+  category        text NOT NULL CHECK (category IN (
+    'exam','restorative','endodontic','extraction','periodontic',
+    'prosthodontic','orthodontic','preventive','oral_surgery'
+  )),
+  description     text NOT NULL CHECK (length(description) >= 3),
+  anesthesia_used text,
+  status          text NOT NULL DEFAULT 'planned'
+                  CHECK (status IN ('planned','in_progress','completed','cancelled')),
+  fee             numeric(12,2) NOT NULL DEFAULT 0 CHECK (fee >= 0),
+  dentist_id      uuid NOT NULL REFERENCES users(id),
+  performed_at    timestamptz,
+  clinical_notes  text,
+  cancel_reason   text,
+  created_by      uuid NOT NULL REFERENCES users(id),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (facility_id, procedure_no),
+  CHECK (status <> 'cancelled' OR (cancel_reason IS NOT NULL AND length(cancel_reason) >= 5))
+);
+CREATE INDEX dental_procedures_board_idx ON dental_procedures (facility_id, status, created_at DESC);
+CREATE INDEX dental_procedures_patient_idx ON dental_procedures (patient_id, created_at DESC);
+
+CREATE OR REPLACE FUNCTION dental_procedures_guard_fn() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'dental procedures cannot be deleted' USING ERRCODE = '42501';
+  END IF;
+  IF OLD.status IN ('completed','cancelled') THEN
+    RAISE EXCEPTION 'completed or cancelled dental procedures are immutable' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.patient_id <> OLD.patient_id OR NEW.encounter_id <> OLD.encounter_id THEN
+    RAISE EXCEPTION 'dental procedure patient/encounter cannot be changed' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER dental_procedures_guard
+  BEFORE UPDATE OR DELETE ON dental_procedures
+  FOR EACH ROW EXECUTE FUNCTION dental_procedures_guard_fn();
+
+-- ============================================================================
+-- 3. Physical Therapy & Rehabilitation (العلاج الطبيعي والتأهيل الطبي)
+-- ============================================================================
+
+CREATE TABLE physio_referrals (
+  id                      uuid PRIMARY KEY,
+  facility_id             uuid NOT NULL REFERENCES facilities(id),
+  referral_no             text NOT NULL,
+  patient_id              uuid NOT NULL REFERENCES patients(id),
+  encounter_id            uuid NOT NULL REFERENCES encounters(id),
+  admission_id            uuid REFERENCES admissions(id),
+  diagnosis_summary       text NOT NULL CHECK (length(diagnosis_summary) >= 5),
+  body_region             text NOT NULL,
+  modality_plan           text NOT NULL CHECK (modality_plan IN (
+    'therapeutic_exercise','manual_therapy','electrotherapy','ultrasound_therapy',
+    'hydrotherapy','gait_training','neuro_rehab','post_op_rehab','chest_physio'
+  )),
+  precautions             text,
+  total_sessions          integer NOT NULL DEFAULT 6 CHECK (total_sessions BETWEEN 1 AND 60),
+  completed_sessions      integer NOT NULL DEFAULT 0 CHECK (completed_sessions >= 0),
+  priority                text NOT NULL DEFAULT 'routine' CHECK (priority IN ('routine','urgent','stat')),
+  status                  text NOT NULL DEFAULT 'referred'
+                          CHECK (status IN ('referred','active','completed','cancelled')),
+  referred_by             uuid NOT NULL REFERENCES users(id),
+  assigned_therapist_id   uuid REFERENCES users(id),
+  initial_assessment      text,
+  rehab_goals             text,
+  baseline_pain_score     integer CHECK (baseline_pain_score IS NULL OR baseline_pain_score BETWEEN 0 AND 10),
+  baseline_mobility_score integer CHECK (baseline_mobility_score IS NULL OR baseline_mobility_score BETWEEN 1 AND 10),
+  assessed_at             timestamptz,
+  closed_at               timestamptz,
+  cancel_reason           text,
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (facility_id, referral_no),
+  CHECK (status <> 'cancelled' OR (cancel_reason IS NOT NULL AND length(cancel_reason) >= 5))
+);
+CREATE INDEX physio_referrals_board_idx ON physio_referrals (facility_id, status, created_at DESC);
+CREATE INDEX physio_referrals_patient_idx ON physio_referrals (patient_id, created_at DESC);
+
+CREATE TABLE physio_sessions (
+  id                   uuid PRIMARY KEY,
+  facility_id          uuid NOT NULL REFERENCES facilities(id),
+  session_no           text NOT NULL,
+  referral_id          uuid NOT NULL REFERENCES physio_referrals(id),
+  patient_id           uuid NOT NULL REFERENCES patients(id),
+  session_number       integer NOT NULL CHECK (session_number >= 1),
+  scheduled_at         timestamptz NOT NULL DEFAULT now(),
+  duration_minutes     integer NOT NULL DEFAULT 45 CHECK (duration_minutes BETWEEN 15 AND 180),
+  modalities_performed text[] NOT NULL DEFAULT '{}',
+  pain_before          integer CHECK (pain_before IS NULL OR pain_before BETWEEN 0 AND 10),
+  pain_after           integer CHECK (pain_after IS NULL OR pain_after BETWEEN 0 AND 10),
+  rom_notes            text,
+  patient_tolerance    text CHECK (patient_tolerance IS NULL OR patient_tolerance IN ('excellent','good','fair','poor')),
+  progress_notes       text,
+  status               text NOT NULL DEFAULT 'scheduled'
+                       CHECK (status IN ('scheduled','completed','no_show','cancelled')),
+  fee                  numeric(12,2) NOT NULL DEFAULT 180 CHECK (fee >= 0),
+  therapist_id         uuid NOT NULL REFERENCES users(id),
+  performed_at         timestamptz,
+  cancel_reason        text,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (facility_id, session_no),
+  CHECK (status <> 'cancelled' OR (cancel_reason IS NOT NULL AND length(cancel_reason) >= 5))
+);
+CREATE INDEX physio_sessions_board_idx ON physio_sessions (facility_id, status, scheduled_at DESC);
+CREATE INDEX physio_sessions_referral_idx ON physio_sessions (referral_id, session_number);
+
+CREATE OR REPLACE FUNCTION physio_referrals_guard_fn() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'physiotherapy referrals cannot be deleted' USING ERRCODE = '42501';
+  END IF;
+  IF OLD.status IN ('completed','cancelled') THEN
+    RAISE EXCEPTION 'closed physiotherapy referrals are immutable' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER physio_referrals_guard
+  BEFORE UPDATE OR DELETE ON physio_referrals
+  FOR EACH ROW EXECUTE FUNCTION physio_referrals_guard_fn();
+
+CREATE OR REPLACE FUNCTION physio_sessions_guard_fn() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'physiotherapy sessions cannot be deleted' USING ERRCODE = '42501';
+  END IF;
+  IF OLD.status IN ('completed','cancelled') THEN
+    RAISE EXCEPTION 'completed or cancelled physiotherapy sessions are immutable' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER physio_sessions_guard
+  BEFORE UPDATE OR DELETE ON physio_sessions
+  FOR EACH ROW EXECUTE FUNCTION physio_sessions_guard_fn();
+
+-- ============================================================================
+-- 4. Row-Level Security, Role Grants & PostgREST Lockdown
+-- ============================================================================
+
+DO $$
+DECLARE
+  t text;
+  new_tables text[] := ARRAY[
+    'inventory_warehouses',
+    'inventory_items',
+    'inventory_stock',
+    'inventory_requisitions',
+    'inventory_movements',
+    'dental_chart_entries',
+    'dental_procedures',
+    'physio_referrals',
+    'physio_sessions'
+  ];
+BEGIN
+  FOREACH t IN ARRAY new_tables LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format($f$
+      CREATE POLICY tenant_isolation ON %I FOR ALL TO hms_app
+        USING (facility_id::text = ANY (string_to_array(coalesce(nullif(current_setting('app.facility_ids', true), ''), '-'), ',')))
+        WITH CHECK (facility_id::text = ANY (string_to_array(coalesce(nullif(current_setting('app.facility_ids', true), ''), '-'), ',')))
+    $f$, t);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %I TO hms_app', t);
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      EXECUTE format('REVOKE ALL ON TABLE %I FROM anon', t);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+      EXECUTE format('REVOKE ALL ON TABLE %I FROM authenticated', t);
+    END IF;
+  END LOOP;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM anon;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM authenticated;
+  END IF;
+END $$;
+
+INSERT INTO number_sequences (facility_id, name, next_value)
+SELECT id, seq_name, 10
+  FROM facilities
+ CROSS JOIN (VALUES ('inv_req'), ('dental_proc'), ('physio_ref'), ('physio_sess')) AS s(seq_name)
+ON CONFLICT (facility_id, name) DO NOTHING;
+
+INSERT INTO public.schema_migrations (filename, checksum)
+VALUES ('020_stores_dental_physio.sql', '667effc70ef6225e1ecaf2513d84e08536922ba5ecedc401e81518574fb9ab86')
+ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum;
+
+
+-- ============================================================================
+-- Operational & Authentication Seed (33 Demo Accounts + Reference Catalog)
 -- ============================================================================
 
 -- Table: facilities (2 rows)
-INSERT INTO public.facilities (id, code, name_ar, name_en, timezone, currency, locale, is_active, created_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'OBR', 'المستشفى السعودي الميداني - العبر', 'Saudi Field Hospital - Obar', 'Asia/Riyadh', 'SAR', 'ar-SA', true, '2026-11-13T02:16:55.111Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.facilities (id, code, name_ar, name_en, timezone, currency, locale, is_active, created_at) VALUES ('827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'JED', 'فرع جدة', 'Jeddah Branch', 'Asia/Riyadh', 'SAR', 'ar-SA', true, '2026-11-13T02:16:55.112Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.facilities (id, code, name_ar, name_en, timezone, currency, locale, is_active, created_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'OBR', 'المستشفى السعودي الميداني - العبر', 'Saudi Field Hospital - Obar', 'Asia/Riyadh', 'SAR', 'ar-SA', true, '2026-11-13T22:16:09.034Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.facilities (id, code, name_ar, name_en, timezone, currency, locale, is_active, created_at) VALUES ('827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'JED', 'فرع جدة', 'Jeddah Branch', 'Asia/Riyadh', 'SAR', 'ar-SA', true, '2026-11-13T22:16:09.035Z') ON CONFLICT DO NOTHING;
 
--- Table: departments (8 rows)
-INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('146e591e-3576-4888-b548-183b7632f10b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'GEN', 'الطب العام', 'General Medicine', 'outpatient', true, '2026-11-13T02:16:55.113Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('18e76ac3-0c70-43c2-a24a-a3d86fd1c4d0', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'ER', 'الطوارئ', 'Emergency', 'emergency', true, '2026-11-13T02:16:55.116Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('1ee5d6e2-5834-4948-9de7-2707b1861154', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'LAB', 'المختبر', 'Laboratory', 'lab', true, '2026-11-13T02:16:55.116Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('01fd7648-15a9-4f13-b388-99e267a3e768', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'PHR', 'الصيدلية', 'Pharmacy', 'pharmacy', true, '2026-11-13T02:16:55.117Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('42880db0-7b02-4474-84e0-05ad76f4d2c7', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'ADM', 'الإدارة', 'Administration', 'administration', true, '2026-11-13T02:16:55.118Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('620042e4-c116-4e9a-b1c6-571d149d7cab', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'INP', 'التنويم', 'Inpatient', 'inpatient', true, '2026-11-13T02:16:55.118Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('77b7fc2b-5283-4fef-8b19-2b32cc00039e', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'RAD', 'الأشعة', 'Radiology', 'radiology', true, '2026-11-13T02:16:55.119Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('eaa25e5a-5a8a-4290-856b-d1c7ede18033', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'OR', 'العمليات والتخدير', 'Operating theatres', 'surgery', true, '2026-11-13T02:16:55.120Z') ON CONFLICT DO NOTHING;
+-- Table: departments (30 rows)
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('146e591e-3576-4888-b548-183b7632f10b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'GEN', 'الطب العام', 'General Medicine', 'outpatient', true, '2026-11-13T22:16:09.036Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('18e76ac3-0c70-43c2-a24a-a3d86fd1c4d0', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'GEN', 'الطب العام', 'General Medicine', 'outpatient', true, '2026-11-13T22:16:09.039Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('1ee5d6e2-5834-4948-9de7-2707b1861154', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'ER', 'الطوارئ', 'Emergency', 'emergency', true, '2026-11-13T22:16:09.040Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('01fd7648-15a9-4f13-b388-99e267a3e768', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'ER', 'الطوارئ', 'Emergency', 'emergency', true, '2026-11-13T22:16:09.040Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('42880db0-7b02-4474-84e0-05ad76f4d2c7', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'LAB', 'المختبرات الطبية', 'Medical Laboratories', 'lab', true, '2026-11-13T22:16:09.041Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('620042e4-c116-4e9a-b1c6-571d149d7cab', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'LAB', 'المختبرات الطبية', 'Medical Laboratories', 'lab', true, '2026-11-13T22:16:09.041Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('77b7fc2b-5283-4fef-8b19-2b32cc00039e', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'PHR', 'الصيدلية', 'Pharmacy', 'pharmacy', true, '2026-11-13T22:16:09.042Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('eaa25e5a-5a8a-4290-856b-d1c7ede18033', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'PHR', 'الصيدلية', 'Pharmacy', 'pharmacy', true, '2026-11-13T22:16:09.043Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('0f1b3335-94c3-40b1-8555-a0cd433a00b5', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'ADM', 'الإدارة', 'Administration', 'administration', true, '2026-11-13T22:16:09.043Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('578d63fb-7f0e-4a4e-a5ad-2ac0940cb357', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'ADM', 'الإدارة', 'Administration', 'administration', true, '2026-11-13T22:16:09.044Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('fad18ad1-e9ab-49cf-8761-2498bcfd84a8', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'INP', 'التنويم', 'Inpatient', 'inpatient', true, '2026-11-13T22:16:09.044Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('86fe5588-b29d-42b9-b96b-db17821ab65d', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'INP', 'التنويم', 'Inpatient', 'inpatient', true, '2026-11-13T22:16:09.045Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('6f1bb862-9549-4359-860b-99375b5098fc', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'RAD', 'الأشعة والتصوير الطبي', 'Radiology & Medical Imaging', 'radiology', true, '2026-11-13T22:16:09.045Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('556facbb-3dca-421a-b5d5-030553e2a154', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'RAD', 'الأشعة والتصوير الطبي', 'Radiology & Medical Imaging', 'radiology', true, '2026-11-13T22:16:09.046Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('b0c453f6-4ec8-45ff-b3c5-8d196b295818', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'OR', 'العمليات والتخدير', 'Operating Theatres', 'surgery', true, '2026-11-13T22:16:09.046Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('721aa522-4ba4-461e-8b1e-bb4384e9e0a0', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'OR', 'العمليات والتخدير', 'Operating Theatres', 'surgery', true, '2026-11-13T22:16:09.047Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('24554214-4af9-4ac3-8473-370258d81c2b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'STR', 'المخازن والإمداد الطبي', 'Medical Stores & Warehouses', 'stores', true, '2026-11-13T22:16:09.048Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('d3099055-6391-4479-93e2-ae31ed0bdbd2', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'STR', 'المخازن والإمداد الطبي', 'Medical Stores & Warehouses', 'stores', true, '2026-11-13T22:16:09.048Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('bcdff471-b704-4102-838c-e87d85160e15', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'DNT', 'عيادة الأسنان والفم', 'Dental & Oral Clinic', 'dental', true, '2026-11-13T22:16:09.049Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('347f87d5-3be6-478a-afef-808a611fcf58', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'DNT', 'عيادة الأسنان والفم', 'Dental & Oral Clinic', 'dental', true, '2026-11-13T22:16:09.049Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('ce2e69a2-8077-45d5-ab08-ee41211388cc', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'BBK', 'بنك الدم وطب نقل الدم', 'Blood Bank & Transfusion', 'bloodbank', true, '2026-11-13T22:16:09.050Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('fd30e1bd-38a6-4aa8-b807-1a9d753b7b16', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'BBK', 'بنك الدم وطب نقل الدم', 'Blood Bank & Transfusion', 'bloodbank', true, '2026-11-13T22:16:09.050Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('4f781551-abe9-45ac-aa2c-5b98e012d81c', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'PT', 'العلاج الطبيعي والتأهيل الطبي', 'Physical Therapy & Rehabilitation', 'physiotherapy', true, '2026-11-13T22:16:09.051Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('d24f6c92-70ac-4ddc-a920-e873d5fa6319', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'PT', 'العلاج الطبيعي والتأهيل الطبي', 'Physical Therapy & Rehabilitation', 'physiotherapy', true, '2026-11-13T22:16:09.052Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('83d05cb7-f214-4784-9c45-7c2bec139fb3', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'ICU', 'العناية المركزة', 'Intensive Care Unit', 'icu', true, '2026-11-13T22:16:09.053Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('612cc5d3-93f2-4120-91cf-672fc9cefeac', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'ICU', 'العناية المركزة', 'Intensive Care Unit', 'icu', true, '2026-11-13T22:16:09.054Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('aa2e3834-1cf5-478b-a755-21cdba4f1a8d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS', 'التعقيم المركزي', 'Central Sterile Supply (CSSD)', 'cssd', true, '2026-11-13T22:16:09.054Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('224641b6-72c6-4d86-87dc-e3cc90e114f9', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'CSS', 'التعقيم المركزي', 'Central Sterile Supply (CSSD)', 'cssd', true, '2026-11-13T22:16:09.055Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('adb84318-da2e-4790-ab20-6e6265a3ab1b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'NUT', 'التغذية العلاجية', 'Clinical Nutrition', 'nutrition', true, '2026-11-13T22:16:09.056Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.departments (id, facility_id, code, name_ar, name_en, dept_type, is_active, created_at) VALUES ('8c035504-d9b5-4844-b22f-e6e8b1a141fb', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'NUT', 'التغذية العلاجية', 'Clinical Nutrition', 'nutrition', true, '2026-11-13T22:16:09.056Z') ON CONFLICT DO NOTHING;
 
 -- Table: operating_theatres (2 rows)
-INSERT INTO public.operating_theatres (id, facility_id, dept_id, code, name_ar, name_en, is_active, created_at) VALUES ('0f1b3335-94c3-40b1-8555-a0cd433a00b5', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'eaa25e5a-5a8a-4290-856b-d1c7ede18033', 'OR-1', 'غرفة عمليات ١', 'Theatre 1', true, '2026-11-13T02:16:55.120Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.operating_theatres (id, facility_id, dept_id, code, name_ar, name_en, is_active, created_at) VALUES ('578d63fb-7f0e-4a4e-a5ad-2ac0940cb357', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'eaa25e5a-5a8a-4290-856b-d1c7ede18033', 'OR-2', 'غرفة عمليات ٢', 'Theatre 2', true, '2026-11-13T02:16:55.122Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.operating_theatres (id, facility_id, dept_id, code, name_ar, name_en, is_active, created_at) VALUES ('ea61dc51-eab9-4aad-bafe-b5c58b358e7d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b0c453f6-4ec8-45ff-b3c5-8d196b295818', 'OR-1', 'غرفة عمليات ١', 'Theatre 1', true, '2026-11-13T22:16:09.057Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.operating_theatres (id, facility_id, dept_id, code, name_ar, name_en, is_active, created_at) VALUES ('89c67372-a593-4b4e-bcdd-ee4213d08551', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b0c453f6-4ec8-45ff-b3c5-8d196b295818', 'OR-2', 'غرفة عمليات ٢', 'Theatre 2', true, '2026-11-13T22:16:09.059Z') ON CONFLICT DO NOTHING;
 
--- Table: roles (25 rows)
+-- Table: roles (28 rows)
 INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('system_admin', 'مدير النظام', 'System administrator', NULL, true) ON CONFLICT DO NOTHING;
 INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('hospital_director', 'الإدارة التنفيذية', 'Executive management', NULL, true) ON CONFLICT DO NOTHING;
 INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('hr_manager', 'مدير الموارد البشرية', 'Human resources manager', NULL, true) ON CONFLICT DO NOTHING;
+INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('storekeeper', 'أمين المخازن والإمداد', 'Medical storekeeper', NULL, true) ON CONFLICT DO NOTHING;
+INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('dentist', 'طبيب أسنان', 'Dentist', NULL, true) ON CONFLICT DO NOTHING;
+INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('physiotherapist', 'أخصائي علاج طبيعي', 'Physiotherapist', NULL, true) ON CONFLICT DO NOTHING;
 INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('department_manager', 'مدير قسم', 'Department manager', NULL, true) ON CONFLICT DO NOTHING;
 INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('physician', 'طبيب', 'Physician', NULL, true) ON CONFLICT DO NOTHING;
 INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('nurse', 'تمريض', 'Nurse', NULL, true) ON CONFLICT DO NOTHING;
@@ -2899,7 +3330,7 @@ INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES (
 INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('auditor', 'مدقق', 'Auditor', NULL, true) ON CONFLICT DO NOTHING;
 INSERT INTO public.roles (id, name_ar, name_en, description, is_system) VALUES ('patient', 'مريض', 'Patient', NULL, true) ON CONFLICT DO NOTHING;
 
--- Table: permissions (99 rows)
+-- Table: permissions (110 rows)
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('patient.read', 'patients', 'عرض قائمة المرضى') ON CONFLICT DO NOTHING;
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('patient.create', 'patients', 'تسجيل مرضى') ON CONFLICT DO NOTHING;
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('patient.update', 'patients', 'تعديل بيانات مريض') ON CONFLICT DO NOTHING;
@@ -2988,6 +3419,17 @@ INSERT INTO public.permissions (code, module, desc_ar) VALUES ('hr.credentials.v
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('hr.roster.manage', 'hr', 'جدولة المناوبات ومتابعة الحضور') ON CONFLICT DO NOTHING;
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('hr.leave.approve', 'hr', 'مراجعة واعتماد أو رفض طلبات الإجازات (فصل مهام)') ON CONFLICT DO NOTHING;
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('hr.self', 'hr', 'بوابة الموظف الذاتية للمناوبات والإجازات والتراخيص') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('inventory.read', 'inventory', 'عرض المخازن الطبية والأصناف والأرصدة') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('inventory.manage', 'inventory', 'إدارة المستودعات وكتالوج الأصناف والتسويات الجردية') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('inventory.stock', 'inventory', 'توريد واستلام دفعات المستلزمات الطبية') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('inventory.request', 'inventory', 'طلب صرف مستلزمات مخزنية للقسم') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('inventory.issue', 'inventory', 'اعتماد وصرف طلبات الأقسام من المخازن (فصل مهام)') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('dental.read', 'dental', 'عرض عيادة الأسنان ومخطط الأسنان (FDI)') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('dental.chart', 'dental', 'تسجيل حالة الأسنان على المخطط السني (Odontogram)') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('dental.perform', 'dental', 'إجراء وإتمام المعالجات السنية') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('physio.read', 'physio', 'عرض لوحة العلاج الطبيعي والخطط التأهيلية') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('physio.refer', 'physio', 'تحويل المرضى للعلاج الطبيعي والتأهيل') ON CONFLICT DO NOTHING;
+INSERT INTO public.permissions (code, module, desc_ar) VALUES ('physio.perform', 'physio', 'تقييم المرضى وتنفيذ جلسات العلاج الطبيعي') ON CONFLICT DO NOTHING;
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('admin.users.read', 'admin', 'عرض المستخدمين') ON CONFLICT DO NOTHING;
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('admin.users.manage', 'admin', 'إدارة المستخدمين') ON CONFLICT DO NOTHING;
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('admin.roles.manage', 'admin', 'إدارة الأدوار') ON CONFLICT DO NOTHING;
@@ -3000,7 +3442,7 @@ INSERT INTO public.permissions (code, module, desc_ar) VALUES ('report.export', 
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('report.finance', 'reports', 'تقارير مالية على مستوى المنشأة') ON CONFLICT DO NOTHING;
 INSERT INTO public.permissions (code, module, desc_ar) VALUES ('portal.self', 'portal', 'بوابة المريض') ON CONFLICT DO NOTHING;
 
--- Table: role_permissions (324 rows)
+-- Table: role_permissions (405 rows)
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('system_admin', 'admin.users.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('system_admin', 'admin.users.manage') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('system_admin', 'admin.roles.manage') ON CONFLICT DO NOTHING;
@@ -3021,6 +3463,11 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital_director', 'hr.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital_director', 'hr.credentials.verify') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital_director', 'hr.leave.approve') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital_director', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital_director', 'dental.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital_director', 'physio.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital_director', 'radiology.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hospital_director', 'bloodbank.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hr_manager', 'hr.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hr_manager', 'hr.manage') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hr_manager', 'hr.credentials.verify') ON CONFLICT DO NOTHING;
@@ -3028,6 +3475,46 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hr_manag
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hr_manager', 'hr.leave.approve') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hr_manager', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('hr_manager', 'report.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('storekeeper', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('storekeeper', 'inventory.manage') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('storekeeper', 'inventory.stock') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('storekeeper', 'inventory.request') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('storekeeper', 'inventory.issue') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('storekeeper', 'report.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('storekeeper', 'hr.self') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'patient.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'appointment.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'appointment.update') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'clinical.encounter.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'clinical.encounter.create') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'clinical.note.write') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'clinical.diagnose') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'clinical.vitals.write') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'clinical.order.create') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'clinical.prescription.create') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'radiology.order') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'radiology.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'dental.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'dental.chart') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'dental.perform') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'billing.invoice.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'inventory.request') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'report.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dentist', 'hr.self') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'patient.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'appointment.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'clinical.encounter.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'clinical.vitals.write') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'clinical.note.write') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'physio.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'physio.perform') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'inventory.request') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'report.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physiotherapist', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'clinical.encounter.read') ON CONFLICT DO NOTHING;
@@ -3048,6 +3535,10 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon'
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'nursing.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'cssd.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'cssd.issue') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'physio.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'physio.refer') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('surgeon', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('anesthesiologist', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('anesthesiologist', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
@@ -3070,6 +3561,8 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('or_nurse
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('or_nurse', 'nursing.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('or_nurse', 'cssd.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('or_nurse', 'cssd.issue') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('or_nurse', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('or_nurse', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('or_nurse', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensivist', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensivist', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
@@ -3097,6 +3590,8 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensiv
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensivist', 'bloodbank.reaction') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensivist', 'nutrition.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensivist', 'nutrition.intake') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensivist', 'physio.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensivist', 'physio.refer') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('intensivist', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('icu_nurse', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('icu_nurse', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
@@ -3117,6 +3612,7 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('icu_nurs
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('icu_nurse', 'nutrition.intake') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('icu_nurse', 'infection.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('icu_nurse', 'cssd.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('icu_nurse', 'physio.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('icu_nurse', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dietitian', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('dietitian', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
@@ -3140,6 +3636,8 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('cssd_tec
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('cssd_tech', 'cssd.sterilize') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('cssd_tech', 'cssd.release') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('cssd_tech', 'cssd.issue') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('cssd_tech', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('cssd_tech', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('cssd_tech', 'report.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('cssd_tech', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('infection_control', 'patient.read') ON CONFLICT DO NOTHING;
@@ -3163,6 +3661,8 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('blood_ba
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('blood_bank_tech', 'bloodbank.issue') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('blood_bank_tech', 'bloodbank.stock') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('blood_bank_tech', 'bloodbank.reaction') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('blood_bank_tech', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('blood_bank_tech', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('blood_bank_tech', 'report.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('blood_bank_tech', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'patient.read') ON CONFLICT DO NOTHING;
@@ -3178,6 +3678,7 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('departme
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'clinical.order.create') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'clinical.vitals.write') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'lab.result.verify') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'lab.result.amend') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'radiology.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'radiology.order') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'radiology.critical.ack') ON CONFLICT DO NOTHING;
@@ -3194,6 +3695,11 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('departme
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'bloodbank.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'bloodbank.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'bloodbank.reaction') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'dental.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'physio.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'physio.refer') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'hr.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'hr.roster.manage') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('department_manager', 'hr.leave.approve') ON CONFLICT DO NOTHING;
@@ -3227,6 +3733,11 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physicia
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'surgery.schedule') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'bloodbank.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'bloodbank.request') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'dental.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'physio.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'physio.refer') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('physician', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
@@ -3257,6 +3768,9 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'infection.isolate') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'infection.surveillance') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'infection.audit') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'physio.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('nurse', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('receptionist', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('receptionist', 'patient.create') ON CONFLICT DO NOTHING;
@@ -3282,14 +3796,19 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'lab.sample.collect') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'lab.result.enter') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'lab.result.verify') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'lab.result.amend') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'lab.critical.ack') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'clinical.encounter.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('lab_tech', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiology_tech', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiology_tech', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiology_tech', 'clinical.encounter.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiology_tech', 'radiology.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiology_tech', 'radiology.perform') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiology_tech', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiology_tech', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiology_tech', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiologist', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('radiologist', 'patient.chart.clinical') ON CONFLICT DO NOTHING;
@@ -3304,6 +3823,8 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('pharmaci
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('pharmacist', 'pharmacy.dispense') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('pharmacist', 'pharmacy.stock.manage') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('pharmacist', 'billing.invoice.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('pharmacist', 'inventory.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('pharmacist', 'inventory.request') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('pharmacist', 'hr.self') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'patient.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'patient.chart.administrative') ON CONFLICT DO NOTHING;
@@ -3313,6 +3834,7 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accounta
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'billing.invoice.void') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'billing.discount.apply') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'insurance.claim.manage') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'inventory.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'report.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'report.export') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('accountant', 'report.finance') ON CONFLICT DO NOTHING;
@@ -3324,126 +3846,139 @@ INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('auditor'
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('auditor', 'admin.users.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('auditor', 'nursing.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('auditor', 'hr.read') ON CONFLICT DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('auditor', 'inventory.read') ON CONFLICT DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_code) VALUES ('patient', 'portal.self') ON CONFLICT DO NOTHING;
 
--- Table: users (29 rows)
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('fad18ad1-e9ab-49cf-8761-2498bcfd84a8', 'admin@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$HEdb2KkzEFfIHgkA59fSqQ$W5Od3hd/R7+B1WErXs0Fw0gseZrmknYqqo1W/iFlyZ4', 'مدير النظام', 'System Admin', 'مدير النظام', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.680Z', '2026-11-13T02:16:55.680Z', '2026-11-13T02:16:55.680Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('86fe5588-b29d-42b9-b96b-db17821ab65d', 'director@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$zS3AMaTE6jRgJsQ7iuxbGA$cSbRvFFOHY/6+GFYRQY9dem25ow1bAIXOYgABadXdio', 'د. خالد العتيبي', 'Dr. Khalid Alotaibi', 'المدير التنفيذي', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.689Z', '2026-11-13T02:16:55.689Z', '2026-11-13T02:16:55.689Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('6f1bb862-9549-4359-860b-99375b5098fc', 'hr@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Ayz7pa/ZtRwAdqEKSfD0Kg$ZvJoayrJwff3QcS++2EjT01ewN/h+HLQbocsJut4UTE', 'ماجد المالكي', 'Majed Almalki', 'أخصائي الموارد البشرية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.692Z', '2026-11-13T02:16:55.692Z', '2026-11-13T02:16:55.692Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('556facbb-3dca-421a-b5d5-030553e2a154', 'hr2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Ayz7pa/ZtRwAdqEKSfD0Kg$ZvJoayrJwff3QcS++2EjT01ewN/h+HLQbocsJut4UTE', 'مها الشمراني', 'Maha Alshamrani', 'مشرفة شؤون الممارسين والتراخيص', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.694Z', '2026-11-13T02:16:55.694Z', '2026-11-13T02:16:55.694Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('b0c453f6-4ec8-45ff-b3c5-8d196b295818', 'dr.ahmed@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$h6RH3tILN00cduavD43LJA$WNI5GnY0EDwML1pyk39ImauLbuh5gbMKsRsEKsyjoSA', 'د. أحمد الحربي', 'Dr. Ahmed Alharbi', 'استشاري طب باطني', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.696Z', '2026-11-13T02:16:55.696Z', '2026-11-13T02:16:55.696Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('721aa522-4ba4-461e-8b1e-bb4384e9e0a0', 'dr.sara@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$h6RH3tILN00cduavD43LJA$WNI5GnY0EDwML1pyk39ImauLbuh5gbMKsRsEKsyjoSA', 'د. سارة القحطاني', 'Dr. Sara Alqahtani', 'استشارية طوارئ', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.699Z', '2026-11-13T02:16:55.699Z', '2026-11-13T02:16:55.699Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('24554214-4af9-4ac3-8473-370258d81c2b', 'nurse@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$7Jax8lwaJlOvSK5xPpFdNg$X8Nb6Fh+aIf2u9q2cKNH7LY19DFCZOeULV3W8oMPWOs', 'مريم الزهراني', 'Mariam Alzahrani', 'ممرضة أولى', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.703Z', '2026-11-13T02:16:55.703Z', '2026-11-13T02:16:55.703Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('d3099055-6391-4479-93e2-ae31ed0bdbd2', 'nurse2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$7Jax8lwaJlOvSK5xPpFdNg$X8Nb6Fh+aIf2u9q2cKNH7LY19DFCZOeULV3W8oMPWOs', 'ليلى العمري', 'Layla Alamri', 'ممرضة مناوبة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.705Z', '2026-11-13T02:16:55.705Z', '2026-11-13T02:16:55.705Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('bcdff471-b704-4102-838c-e87d85160e15', 'surgeon@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$YV1hzo/Eoa57/RdRjxxYcg$t2sUQhkqBlTgbGJaYUZNv7LIqFPDaDrBu2h7idgBQiM', 'د. عبدالله الغامدي', 'Dr. Abdullah Alghamdi', 'استشاري جراحة عامة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.707Z', '2026-11-13T02:16:55.707Z', '2026-11-13T02:16:55.707Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('347f87d5-3be6-478a-afef-808a611fcf58', 'anesthesia@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$WQtQaKqfYkkFr9tO/Ps4zw$Xm/S7RIjbLkSc6FoMb5cBL3EE2Z9Mir8Rm0SOwjJFl0', 'د. هدى المطيري', 'Dr. Huda Almutairi', 'استشارية تخدير', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.708Z', '2026-11-13T02:16:55.708Z', '2026-11-13T02:16:55.708Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('ce2e69a2-8077-45d5-ab08-ee41211388cc', 'ornurse@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$7Jax8lwaJlOvSK5xPpFdNg$X8Nb6Fh+aIf2u9q2cKNH7LY19DFCZOeULV3W8oMPWOs', 'سارة الدوسري', 'Sara Aldosari', 'ممرضة غرفة عمليات', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.718Z', '2026-11-13T02:16:55.718Z', '2026-11-13T02:16:55.718Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('fd30e1bd-38a6-4aa8-b807-1a9d753b7b16', 'intensivist@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$weC2FVJ3INU0pRGRSbXHuA$5SJj3TjBjihsR6E78QolNfGtrQcnkEvUOp5ZjFSG+y0', 'د. فيصل الحربي', 'Dr. Faisal Alharbi', 'استشاري عناية مركزة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.719Z', '2026-11-13T02:16:55.719Z', '2026-11-13T02:16:55.719Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('4f781551-abe9-45ac-aa2c-5b98e012d81c', 'icunurse@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$weC2FVJ3INU0pRGRSbXHuA$5SJj3TjBjihsR6E78QolNfGtrQcnkEvUOp5ZjFSG+y0', 'أمل الجهني', 'Amal Aljohani', 'ممرضة عناية مركزة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.721Z', '2026-11-13T02:16:55.721Z', '2026-11-13T02:16:55.721Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('d24f6c92-70ac-4ddc-a920-e873d5fa6319', 'bloodbank@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$DAAyIFF5gGkFvvzhConVlg$JZKddM3x7al3AU2fQS8oNix3nqD0PEoyqI50DbuzURs', 'نورة الحربي', 'Noura Alharbi', 'فنية بنك دم', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.723Z', '2026-11-13T02:16:55.723Z', '2026-11-13T02:16:55.723Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('83d05cb7-f214-4784-9c45-7c2bec139fb3', 'dietitian@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$uvNbLt/immqpenVXlT9K3Q$/8hzF51EE2UswaXFeGJg53IFmfIWl5gTuvEIGxGJ5s8', 'هيفاء الزهراني', 'Haifa Alzahrani', 'أخصائية تغذية علاجية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.724Z', '2026-11-13T02:16:55.724Z', '2026-11-13T02:16:55.724Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('612cc5d3-93f2-4120-91cf-672fc9cefeac', 'kitchen@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Ad94Sj1wNSDaPsDdeT7mOA$/Z02yVziNScCuuueZyKdH1WkM8Tob90b74aLwqWG5kw', 'ماجد الشهري', 'Majed Alshehri', 'مسؤول خدمات التغذية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.726Z', '2026-11-13T02:16:55.726Z', '2026-11-13T02:16:55.726Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('aa2e3834-1cf5-478b-a755-21cdba4f1a8d', 'cssd@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$oC242rYpQRAa8eS8ALxt+g$MpS8W5y11uSRaVObFzvOn7CGDMQUp2DR7Ts7XIvtx4k', 'عمر باوزير', 'Omar Bawazir', 'فني تعقيم مركزي', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.728Z', '2026-11-13T02:16:55.728Z', '2026-11-13T02:16:55.728Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('224641b6-72c6-4d86-87dc-e3cc90e114f9', 'cssd2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$oC242rYpQRAa8eS8ALxt+g$MpS8W5y11uSRaVObFzvOn7CGDMQUp2DR7Ts7XIvtx4k', 'خديجة عسيري', 'Khadija Asiri', 'مشرفة التعقيم المركزي', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.729Z', '2026-11-13T02:16:55.729Z', '2026-11-13T02:16:55.729Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('adb84318-da2e-4790-ab20-6e6265a3ab1b', 'infection@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$glV10CncZk+AwnF55ruGvQ$Ov4+jNsansoBheTBVg/IvOCiVmc4iUuruueQa9VSvm4', 'د. رقية الأنصاري', 'Dr. Ruqaya Alansari', 'استشارية مكافحة العدوى', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.731Z', '2026-11-13T02:16:55.731Z', '2026-11-13T02:16:55.731Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('8c035504-d9b5-4844-b22f-e6e8b1a141fb', 'reception@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$YTu/4z41BvNvNhNW8/WPsg$7+/PYCy5RCNTEaJ8MJD4+ctBLGpXMSDro99AgI0G2Jc', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.732Z', '2026-11-13T02:16:55.732Z', '2026-11-13T02:16:55.732Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('ea61dc51-eab9-4aad-bafe-b5c58b358e7d', 'records@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$QAsRHjcsD8YZl/KWsylBUw$oFCD1uFOEU5GmzZqdyzhV+yYJ7vD0BI/BxCeSHMKc88', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.734Z', '2026-11-13T02:16:55.734Z', '2026-11-13T02:16:55.734Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('89c67372-a593-4b4e-bcdd-ee4213d08551', 'lab@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$UPZvovnwTZ6iBFUsnaR8Kg$ytei4EdtoOoymkCRVWkOdRkPfZAvR3rMttGWMIneE0E', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.736Z', '2026-11-13T02:16:55.736Z', '2026-11-13T02:16:55.736Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('51448ee2-3ca8-453a-8219-41a7b1ba33da', 'lab2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$UPZvovnwTZ6iBFUsnaR8Kg$ytei4EdtoOoymkCRVWkOdRkPfZAvR3rMttGWMIneE0E', 'هند الغامدي', 'Hind Alghamdi', 'أخصائية مختبر', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.737Z', '2026-11-13T02:16:55.737Z', '2026-11-13T02:16:55.737Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('a45ac955-41f2-4ccc-9bb7-b4d6a73d4a9f', 'radiology@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$7NDMkKUiXR/8K67XgDD7kQ$g2rzBrnAsmyCdObmlp5CQZMfs0FO/NAS5+bYw9QLVtM', 'طلال البلوي', 'Talal Albalawi', 'فني أشعة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.738Z', '2026-11-13T02:16:55.738Z', '2026-11-13T02:16:55.738Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('0adfcfa9-a60f-4206-bf4e-4b1f61411294', 'radiologist@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$7NDMkKUiXR/8K67XgDD7kQ$g2rzBrnAsmyCdObmlp5CQZMfs0FO/NAS5+bYw9QLVtM', 'د. منى الشريف', 'Dr. Mona Alsharif', 'استشارية أشعة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.740Z', '2026-11-13T02:16:55.740Z', '2026-11-13T02:16:55.740Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('5429e3a8-0ca6-4cb1-9e88-4a0420cd20e5', 'pharmacist@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$WujDu1hxlgz9Qc445S7cAw$Ws/PxxoHbMaIvI3k4aK5Th/PUWU1iaKCihOn5ImG4PI', 'ريم المالكي', 'Reem Almalki', 'صيدلانية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.741Z', '2026-11-13T02:16:55.741Z', '2026-11-13T02:16:55.741Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('6ee88313-d715-4dc2-83dc-9b8020d277b1', 'accountant@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$cdIW646+BnNPYKrx+7H6Rw$kMA3sW1JzIHJY4YiiBqJVQi9/bGna3zvBQaL5RT/gBA', 'سلمان القحطاني', 'Salman Alqahtani', 'محاسب', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.743Z', '2026-11-13T02:16:55.743Z', '2026-11-13T02:16:55.743Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('57283d40-fa50-4749-ab26-4ff0b379cb24', 'auditor@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$O8kn7r0x5FULTf/DFN0jtw$vcKuqrZiQX5My6OErPuHS6gNqXuLYInQwvXm2DPuiMM', 'لمى الحمد', 'Lama Alhamd', 'مدققة داخلية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.744Z', '2026-11-13T02:16:55.744Z', '2026-11-13T02:16:55.744Z', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('c2f1ad62-9cf9-4acc-80d8-860fe4ff350c', 'patient@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$OOoF4HD4sGB07HjpeJzq0Q$qcrqni0vSotyvHdgltPgIIT/Kv7aUESvh6xd+ID7TE4', 'محمد العسيري', 'Mohammed Alaseeri', NULL, NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T02:16:55.747Z', '2026-11-13T02:16:55.747Z', '2026-11-13T02:16:55.747Z', false) ON CONFLICT DO NOTHING;
+-- Table: users (33 rows)
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('51448ee2-3ca8-453a-8219-41a7b1ba33da', 'admin@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$khxiqsknUp62bCQjt0z9OA$ApvDcEdrkGhZCQzndXMQtBqnd+HYoSoD9V0m8iBFKMg', 'مدير النظام', 'System Admin', 'مدير النظام', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.494Z', '2026-11-13T22:16:09.494Z', '2026-11-13T22:16:09.494Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('a45ac955-41f2-4ccc-9bb7-b4d6a73d4a9f', 'director@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$ZOCh3W3Y1QY0JnuaRTAgLA$2i6BTTmxH3FZirQH+yAGuJGXxB6Pu6dDJd1G1R72iQY', 'د. خالد العتيبي', 'Dr. Khalid Alotaibi', 'المدير التنفيذي', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.529Z', '2026-11-13T22:16:09.529Z', '2026-11-13T22:16:09.529Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('0adfcfa9-a60f-4206-bf4e-4b1f61411294', 'hr@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$t22y1NZjI+shEobJtIjo2Q$mGsRwx2QL+aEVK4XfsyVgfe4XCO9+CMn3/4FEn81wPc', 'ماجد المالكي', 'Majed Almalki', 'أخصائي الموارد البشرية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.531Z', '2026-11-13T22:16:09.531Z', '2026-11-13T22:16:09.531Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('5429e3a8-0ca6-4cb1-9e88-4a0420cd20e5', 'hr2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$t22y1NZjI+shEobJtIjo2Q$mGsRwx2QL+aEVK4XfsyVgfe4XCO9+CMn3/4FEn81wPc', 'مها الشمراني', 'Maha Alshamrani', 'مشرفة شؤون الممارسين والتراخيص', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.534Z', '2026-11-13T22:16:09.534Z', '2026-11-13T22:16:09.534Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('6ee88313-d715-4dc2-83dc-9b8020d277b1', 'stores@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Ez3kJNHFW+grM8vNi1jjQw$Pc5om7MRJ0DeF8kGUnwqQro54LxnWTyq/WacAIC/NoA', 'فارس القحطاني', 'Fares Alqahtani', 'أمين المخازن الطبية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.536Z', '2026-11-13T22:16:09.536Z', '2026-11-13T22:16:09.536Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('57283d40-fa50-4749-ab26-4ff0b379cb24', 'stores2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Ez3kJNHFW+grM8vNi1jjQw$Pc5om7MRJ0DeF8kGUnwqQro54LxnWTyq/WacAIC/NoA', 'بندر السبيعي', 'Bandar Alsubaie', 'مشرف الإمداد والتموين الطبي', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.538Z', '2026-11-13T22:16:09.538Z', '2026-11-13T22:16:09.538Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('c2f1ad62-9cf9-4acc-80d8-860fe4ff350c', 'dentist@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$7PVsWWQkEIscy+mWPq9+Gg$vI8RXBxZK2tQDIZajlESHEI2pH7BKnp0pyF+XrZMh9U', 'د. طارق الغامدي', 'Dr. Tariq Alghamdi', 'استشاري طب وجراحة الأسنان', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.540Z', '2026-11-13T22:16:09.540Z', '2026-11-13T22:16:09.540Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('de15cd6f-f1f3-4a29-94f1-0792f43ff04d', 'physio@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$bWBOcGI3aQ4l0kc4Aqzm2Q$uUeK42SaWhwlJ8JqV+exMYVHRqURJeDTUy6wnhBr7YU', 'ريان الشهري', 'Rayan Alshehri', 'أخصائي أول علاج طبيعي وتأهيل', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.541Z', '2026-11-13T22:16:09.541Z', '2026-11-13T22:16:09.541Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('812015e7-0075-402c-a28b-3074dbae5456', 'dr.ahmed@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$SsvYW9vBe7sygzGPyMJy4A$TEsItGia7o6UwHUm0gOlEC2cfnjSbcMWNrQPX7JgQTM', 'د. أحمد الحربي', 'Dr. Ahmed Alharbi', 'استشاري طب باطني', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.542Z', '2026-11-13T22:16:09.542Z', '2026-11-13T22:16:09.542Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('61649ac5-ae60-408b-89e8-9d0a62b7f600', 'dr.sara@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$SsvYW9vBe7sygzGPyMJy4A$TEsItGia7o6UwHUm0gOlEC2cfnjSbcMWNrQPX7JgQTM', 'د. سارة القحطاني', 'Dr. Sara Alqahtani', 'استشارية طوارئ', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.543Z', '2026-11-13T22:16:09.543Z', '2026-11-13T22:16:09.543Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('ba10cda4-3731-4331-946a-d5b1fa8bc2b1', 'nurse@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Zq2VotiJkgE8WL05GBOUTg$GnKqjYM+37E8oS5FEzzrU9dR3PnYdZ7sRUcx6coKXpI', 'مريم الزهراني', 'Mariam Alzahrani', 'ممرضة أولى', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.545Z', '2026-11-13T22:16:09.545Z', '2026-11-13T22:16:09.545Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('8b6b260e-89c4-4dfe-8878-5dc8d842c74f', 'nurse2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Zq2VotiJkgE8WL05GBOUTg$GnKqjYM+37E8oS5FEzzrU9dR3PnYdZ7sRUcx6coKXpI', 'ليلى العمري', 'Layla Alamri', 'ممرضة مناوبة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.546Z', '2026-11-13T22:16:09.546Z', '2026-11-13T22:16:09.546Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('fa56c1cc-765b-4513-b0c9-91e7de28a6a5', 'surgeon@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$oV9BnciCh8tBDjE7kzbQwQ$Ju0XTSrT224/atA2i2LrExG46t4XOpEq+kPuPUQ7f5o', 'د. عبدالله الغامدي', 'Dr. Abdullah Alghamdi', 'استشاري جراحة عامة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.547Z', '2026-11-13T22:16:09.547Z', '2026-11-13T22:16:09.547Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('3286eb2b-bd8b-4e54-8288-73725f2e7551', 'anesthesia@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$5JRhnDEfGXs31lCMSPvlJw$ZEIqZ33/kxj2mgMrBYZfUSWVpIrOeRpCvJlNJI6o74g', 'د. هدى المطيري', 'Dr. Huda Almutairi', 'استشارية تخدير', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.549Z', '2026-11-13T22:16:09.549Z', '2026-11-13T22:16:09.549Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('9b107731-91a9-4f59-a8f6-f69aa269c2cb', 'ornurse@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Zq2VotiJkgE8WL05GBOUTg$GnKqjYM+37E8oS5FEzzrU9dR3PnYdZ7sRUcx6coKXpI', 'سارة الدوسري', 'Sara Aldosari', 'ممرضة غرفة عمليات', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.550Z', '2026-11-13T22:16:09.550Z', '2026-11-13T22:16:09.550Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('4dccd026-a622-4144-af61-544a128e7476', 'intensivist@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$uy3XrW54HWVkrhBfpXNxyw$TPo2fxbZaM3H/WtXSM2sYAt6MNW87DgGQk1CRj4thYc', 'د. فيصل الحربي', 'Dr. Faisal Alharbi', 'استشاري عناية مركزة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.551Z', '2026-11-13T22:16:09.551Z', '2026-11-13T22:16:09.551Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('5a915839-fbd0-44de-9d73-7bb4db13a8b4', 'icunurse@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$uy3XrW54HWVkrhBfpXNxyw$TPo2fxbZaM3H/WtXSM2sYAt6MNW87DgGQk1CRj4thYc', 'أمل الجهني', 'Amal Aljohani', 'ممرضة عناية مركزة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.554Z', '2026-11-13T22:16:09.554Z', '2026-11-13T22:16:09.554Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('2295120b-56c8-4ea9-9310-8704d88563a2', 'bloodbank@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$uZAp1bU6YkF3kQfLS2YbLA$2b1SC+YtT5XC0XvnRUv6SywNTXUAiiS3t06UWiqGXT8', 'نورة الحربي', 'Noura Alharbi', 'فنية بنك دم', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.555Z', '2026-11-13T22:16:09.555Z', '2026-11-13T22:16:09.555Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('d9bb83ac-0edc-489a-9416-54fdb607f3d6', 'dietitian@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$YnZnK1Bac1zltlDQpwBfNA$U+BBWgXJU5NlEsJDeiKy3ldDT9s1BN6yRDUmRTpXwqg', 'هيفاء الزهراني', 'Haifa Alzahrani', 'أخصائية تغذية علاجية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.557Z', '2026-11-13T22:16:09.557Z', '2026-11-13T22:16:09.557Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('2ced6de5-730d-4038-b3e1-1429e7e84344', 'kitchen@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$TMPemITIrDhqeUNhbyTXZA$ZAL/bth7hAHlihsnZPpKW0sRGU+Ku2bRrPqxOj2d510', 'ماجد الشهري', 'Majed Alshehri', 'مسؤول خدمات التغذية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.559Z', '2026-11-13T22:16:09.559Z', '2026-11-13T22:16:09.559Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('d7649f7b-2b1c-4c16-95a9-805418d0856a', 'cssd@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$5QaKdh1DQS9UW789wQWanA$9Fb/I3PxhGZ3KJS2BVVoRjksg/sjXjKL09nyEQi/ahs', 'عمر باوزير', 'Omar Bawazir', 'فني تعقيم مركزي', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.561Z', '2026-11-13T22:16:09.561Z', '2026-11-13T22:16:09.561Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('b9a4049d-bc59-4f04-b712-b5c829441a29', 'cssd2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$5QaKdh1DQS9UW789wQWanA$9Fb/I3PxhGZ3KJS2BVVoRjksg/sjXjKL09nyEQi/ahs', 'خديجة عسيري', 'Khadija Asiri', 'مشرفة التعقيم المركزي', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.562Z', '2026-11-13T22:16:09.562Z', '2026-11-13T22:16:09.562Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('07761178-3a94-4ffb-8097-1d676f8c998d', 'infection@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$Nk15mHLL7URPqWz7duQYlw$WNyI3g4v1sM8siL5x4JW/0jBNeIgP1iPoucl7/HuDtI', 'د. رقية الأنصاري', 'Dr. Ruqaya Alansari', 'استشارية مكافحة العدوى', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.563Z', '2026-11-13T22:16:09.563Z', '2026-11-13T22:16:09.563Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('5b596af5-c1bd-4008-9664-bb86d1fea2ee', 'reception@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$knySkVCFUtyOJevGYqpkug$pCQIQNl9nubYWo7/7VCfUetB3mImJ9KBwEvpj0b3dKc', 'عبدالله الشهري', 'Abdullah Alshehri', 'موظف استقبال', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.565Z', '2026-11-13T22:16:09.565Z', '2026-11-13T22:16:09.565Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('b7c8143f-46b6-4223-8ced-75ed50ee5192', 'records@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$G8x3SePoI5ViIjKZ9D1DWw$7zzy5c2lV5ExX9L83J23nHdxsOobXv7KHYXFLlP6qiE', 'نورة السبيعي', 'Noura Alsubaie', 'أخصائي سجلات طبية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.566Z', '2026-11-13T22:16:09.566Z', '2026-11-13T22:16:09.566Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('1e192547-ef57-47e0-a612-c2734f02ef63', 'lab@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$gx1/Ukg6t5XZxKRhca3cMA$KAA9i0FIZqJd64a6ZAfiuKBbSd+SPpo3tBMLBt32ghQ', 'فهد الدوسري', 'Fahad Aldosari', 'فني مختبر', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.568Z', '2026-11-13T22:16:09.568Z', '2026-11-13T22:16:09.568Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('bfca792e-2368-49fa-b151-00eccbeeaaa0', 'lab2@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$gx1/Ukg6t5XZxKRhca3cMA$KAA9i0FIZqJd64a6ZAfiuKBbSd+SPpo3tBMLBt32ghQ', 'هند الغامدي', 'Hind Alghamdi', 'أخصائية مختبر', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.569Z', '2026-11-13T22:16:09.569Z', '2026-11-13T22:16:09.569Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('0a46bd63-2214-45ab-9fed-faa4ef96c2f1', 'radiology@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$R5MFWuUPZ2hvCZu57LaAGw$6gnU+zj0UJObz57cMkVVwc6g6F2XU3Eg7Q91PMtbzJ0', 'طلال البلوي', 'Talal Albalawi', 'فني أشعة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.570Z', '2026-11-13T22:16:09.570Z', '2026-11-13T22:16:09.570Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('2395396e-0df8-4bd4-a219-21f1a744bb5a', 'radiologist@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$R5MFWuUPZ2hvCZu57LaAGw$6gnU+zj0UJObz57cMkVVwc6g6F2XU3Eg7Q91PMtbzJ0', 'د. منى الشريف', 'Dr. Mona Alsharif', 'استشارية أشعة', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.572Z', '2026-11-13T22:16:09.572Z', '2026-11-13T22:16:09.572Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('e10cd18c-de02-4cbd-ac55-1d370d928437', 'pharmacist@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$qcFhtasxrIz1MxRxN0nreg$wcREhW1hwMqukHCsuybg6s/P2+D+7TisBlOOP5v+v9Q', 'ريم المالكي', 'Reem Almalki', 'صيدلانية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.574Z', '2026-11-13T22:16:09.574Z', '2026-11-13T22:16:09.574Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('dfea080f-a30a-4543-a3a3-8af84de0a253', 'accountant@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$L6u+gpVTMQh2FqDsGXSmPw$CEonjcI9eWpNRn4zXm3N2qnK5G4vXN38oDLvcNFx9PU', 'سلمان القحطاني', 'Salman Alqahtani', 'محاسب', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.575Z', '2026-11-13T22:16:09.575Z', '2026-11-13T22:16:09.575Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('a78b9983-2ea3-441b-8963-47b93d41fc72', 'auditor@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$rwPyIQiuesfU1Arx/saDHw$x7n4t87CXdQn9yyrHRkMOcFbHints+3YdljnDCPVW/A', 'لمى الحمد', 'Lama Alhamd', 'مدققة داخلية', NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.576Z', '2026-11-13T22:16:09.576Z', '2026-11-13T22:16:09.576Z', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, phone_enc, is_active, is_super_admin, mfa_enabled, mfa_secret_enc, must_change_password, failed_login_count, locked_until, last_login_at, preferred_language, password_changed_at, created_at, updated_at, mfa_enforced) VALUES ('c2a0c6aa-1575-4092-8555-64463d7887d3', 'patient@demo.hms', '$argon2id$v=19$m=19456,t=2,p=1$08Dw+m1JZO4MF+xDCOZxcA$ZJenocN+uAd/1PpvneuHdYaITOWtYBxsn4II6SFNKtE', 'محمد العسيري', 'Mohammed Alaseeri', NULL, NULL, true, false, false, NULL, false, 0, NULL, NULL, 'ar', '2026-11-13T22:16:09.578Z', '2026-11-13T22:16:09.578Z', '2026-11-13T22:16:09.578Z', false) ON CONFLICT DO NOTHING;
 
--- Table: user_facilities (31 rows)
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('fad18ad1-e9ab-49cf-8761-2498bcfd84a8', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('fad18ad1-e9ab-49cf-8761-2498bcfd84a8', '827238b5-70ce-49fc-9c35-5d97ba97fb9d') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('86fe5588-b29d-42b9-b96b-db17821ab65d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('86fe5588-b29d-42b9-b96b-db17821ab65d', '827238b5-70ce-49fc-9c35-5d97ba97fb9d') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('6f1bb862-9549-4359-860b-99375b5098fc', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('556facbb-3dca-421a-b5d5-030553e2a154', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('b0c453f6-4ec8-45ff-b3c5-8d196b295818', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('721aa522-4ba4-461e-8b1e-bb4384e9e0a0', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('24554214-4af9-4ac3-8473-370258d81c2b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('d3099055-6391-4479-93e2-ae31ed0bdbd2', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('bcdff471-b704-4102-838c-e87d85160e15', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('347f87d5-3be6-478a-afef-808a611fcf58', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('ce2e69a2-8077-45d5-ab08-ee41211388cc', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('fd30e1bd-38a6-4aa8-b807-1a9d753b7b16', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('4f781551-abe9-45ac-aa2c-5b98e012d81c', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('d24f6c92-70ac-4ddc-a920-e873d5fa6319', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('83d05cb7-f214-4784-9c45-7c2bec139fb3', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('612cc5d3-93f2-4120-91cf-672fc9cefeac', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('aa2e3834-1cf5-478b-a755-21cdba4f1a8d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('224641b6-72c6-4d86-87dc-e3cc90e114f9', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('adb84318-da2e-4790-ab20-6e6265a3ab1b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('8c035504-d9b5-4844-b22f-e6e8b1a141fb', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('ea61dc51-eab9-4aad-bafe-b5c58b358e7d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('89c67372-a593-4b4e-bcdd-ee4213d08551', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+-- Table: user_facilities (35 rows)
 INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('51448ee2-3ca8-453a-8219-41a7b1ba33da', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('51448ee2-3ca8-453a-8219-41a7b1ba33da', '827238b5-70ce-49fc-9c35-5d97ba97fb9d') ON CONFLICT DO NOTHING;
 INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('a45ac955-41f2-4ccc-9bb7-b4d6a73d4a9f', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('a45ac955-41f2-4ccc-9bb7-b4d6a73d4a9f', '827238b5-70ce-49fc-9c35-5d97ba97fb9d') ON CONFLICT DO NOTHING;
 INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('0adfcfa9-a60f-4206-bf4e-4b1f61411294', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
 INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('5429e3a8-0ca6-4cb1-9e88-4a0420cd20e5', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
 INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('6ee88313-d715-4dc2-83dc-9b8020d277b1', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
 INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('57283d40-fa50-4749-ab26-4ff0b379cb24', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
 INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('c2f1ad62-9cf9-4acc-80d8-860fe4ff350c', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('de15cd6f-f1f3-4a29-94f1-0792f43ff04d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('812015e7-0075-402c-a28b-3074dbae5456', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('61649ac5-ae60-408b-89e8-9d0a62b7f600', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('ba10cda4-3731-4331-946a-d5b1fa8bc2b1', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('8b6b260e-89c4-4dfe-8878-5dc8d842c74f', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('fa56c1cc-765b-4513-b0c9-91e7de28a6a5', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('3286eb2b-bd8b-4e54-8288-73725f2e7551', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('9b107731-91a9-4f59-a8f6-f69aa269c2cb', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('4dccd026-a622-4144-af61-544a128e7476', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('5a915839-fbd0-44de-9d73-7bb4db13a8b4', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('2295120b-56c8-4ea9-9310-8704d88563a2', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('d9bb83ac-0edc-489a-9416-54fdb607f3d6', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('2ced6de5-730d-4038-b3e1-1429e7e84344', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('d7649f7b-2b1c-4c16-95a9-805418d0856a', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('b9a4049d-bc59-4f04-b712-b5c829441a29', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('07761178-3a94-4ffb-8097-1d676f8c998d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('5b596af5-c1bd-4008-9664-bb86d1fea2ee', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('b7c8143f-46b6-4223-8ced-75ed50ee5192', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('1e192547-ef57-47e0-a612-c2734f02ef63', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('bfca792e-2368-49fa-b151-00eccbeeaaa0', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('0a46bd63-2214-45ab-9fed-faa4ef96c2f1', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('2395396e-0df8-4bd4-a219-21f1a744bb5a', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('e10cd18c-de02-4cbd-ac55-1d370d928437', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('dfea080f-a30a-4543-a3a3-8af84de0a253', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('a78b9983-2ea3-441b-8963-47b93d41fc72', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_facilities (user_id, facility_id) VALUES ('c2a0c6aa-1575-4092-8555-64463d7887d3', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a') ON CONFLICT DO NOTHING;
 
--- Table: user_roles (29 rows)
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('fad18ad1-e9ab-49cf-8761-2498bcfd84a8', 'system_admin', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T02:16:55.686Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('86fe5588-b29d-42b9-b96b-db17821ab65d', 'hospital_director', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T02:16:55.691Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('6f1bb862-9549-4359-860b-99375b5098fc', 'hr_manager', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T02:16:55.693Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('556facbb-3dca-421a-b5d5-030553e2a154', 'hr_manager', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T02:16:55.695Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('b0c453f6-4ec8-45ff-b3c5-8d196b295818', 'physician', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '146e591e-3576-4888-b548-183b7632f10b', NULL, '2026-11-13T02:16:55.697Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('721aa522-4ba4-461e-8b1e-bb4384e9e0a0', 'physician', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '18e76ac3-0c70-43c2-a24a-a3d86fd1c4d0', NULL, '2026-11-13T02:16:55.702Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('24554214-4af9-4ac3-8473-370258d81c2b', 'nurse', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '620042e4-c116-4e9a-b1c6-571d149d7cab', NULL, '2026-11-13T02:16:55.704Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('d3099055-6391-4479-93e2-ae31ed0bdbd2', 'nurse', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '620042e4-c116-4e9a-b1c6-571d149d7cab', NULL, '2026-11-13T02:16:55.706Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('bcdff471-b704-4102-838c-e87d85160e15', 'surgeon', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'eaa25e5a-5a8a-4290-856b-d1c7ede18033', NULL, '2026-11-13T02:16:55.707Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('347f87d5-3be6-478a-afef-808a611fcf58', 'anesthesiologist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'eaa25e5a-5a8a-4290-856b-d1c7ede18033', NULL, '2026-11-13T02:16:55.717Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('ce2e69a2-8077-45d5-ab08-ee41211388cc', 'or_nurse', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'eaa25e5a-5a8a-4290-856b-d1c7ede18033', NULL, '2026-11-13T02:16:55.719Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('fd30e1bd-38a6-4aa8-b807-1a9d753b7b16', 'intensivist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '620042e4-c116-4e9a-b1c6-571d149d7cab', NULL, '2026-11-13T02:16:55.720Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('4f781551-abe9-45ac-aa2c-5b98e012d81c', 'icu_nurse', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '620042e4-c116-4e9a-b1c6-571d149d7cab', NULL, '2026-11-13T02:16:55.722Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('d24f6c92-70ac-4ddc-a920-e873d5fa6319', 'blood_bank_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '1ee5d6e2-5834-4948-9de7-2707b1861154', NULL, '2026-11-13T02:16:55.724Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('83d05cb7-f214-4784-9c45-7c2bec139fb3', 'dietitian', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '620042e4-c116-4e9a-b1c6-571d149d7cab', NULL, '2026-11-13T02:16:55.726Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('612cc5d3-93f2-4120-91cf-672fc9cefeac', 'kitchen_staff', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '620042e4-c116-4e9a-b1c6-571d149d7cab', NULL, '2026-11-13T02:16:55.727Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('aa2e3834-1cf5-478b-a755-21cdba4f1a8d', 'cssd_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'eaa25e5a-5a8a-4290-856b-d1c7ede18033', NULL, '2026-11-13T02:16:55.729Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('224641b6-72c6-4d86-87dc-e3cc90e114f9', 'cssd_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'eaa25e5a-5a8a-4290-856b-d1c7ede18033', NULL, '2026-11-13T02:16:55.730Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('adb84318-da2e-4790-ab20-6e6265a3ab1b', 'infection_control', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '620042e4-c116-4e9a-b1c6-571d149d7cab', NULL, '2026-11-13T02:16:55.732Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('8c035504-d9b5-4844-b22f-e6e8b1a141fb', 'receptionist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T02:16:55.733Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('ea61dc51-eab9-4aad-bafe-b5c58b358e7d', 'records_officer', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T02:16:55.735Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('89c67372-a593-4b4e-bcdd-ee4213d08551', 'lab_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '1ee5d6e2-5834-4948-9de7-2707b1861154', NULL, '2026-11-13T02:16:55.736Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('51448ee2-3ca8-453a-8219-41a7b1ba33da', 'lab_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '1ee5d6e2-5834-4948-9de7-2707b1861154', NULL, '2026-11-13T02:16:55.738Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('a45ac955-41f2-4ccc-9bb7-b4d6a73d4a9f', 'radiology_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '77b7fc2b-5283-4fef-8b19-2b32cc00039e', NULL, '2026-11-13T02:16:55.739Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('0adfcfa9-a60f-4206-bf4e-4b1f61411294', 'radiologist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '77b7fc2b-5283-4fef-8b19-2b32cc00039e', NULL, '2026-11-13T02:16:55.741Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('5429e3a8-0ca6-4cb1-9e88-4a0420cd20e5', 'pharmacist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '01fd7648-15a9-4f13-b388-99e267a3e768', NULL, '2026-11-13T02:16:55.742Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('6ee88313-d715-4dc2-83dc-9b8020d277b1', 'accountant', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T02:16:55.744Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('57283d40-fa50-4749-ab26-4ff0b379cb24', 'auditor', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T02:16:55.746Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('c2f1ad62-9cf9-4acc-80d8-860fe4ff350c', 'patient', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', NULL, NULL, '2026-11-13T02:16:55.763Z') ON CONFLICT DO NOTHING;
+-- Table: user_roles (33 rows)
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('51448ee2-3ca8-453a-8219-41a7b1ba33da', 'system_admin', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '0f1b3335-94c3-40b1-8555-a0cd433a00b5', NULL, '2026-11-13T22:16:09.499Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('a45ac955-41f2-4ccc-9bb7-b4d6a73d4a9f', 'hospital_director', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '0f1b3335-94c3-40b1-8555-a0cd433a00b5', NULL, '2026-11-13T22:16:09.531Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('0adfcfa9-a60f-4206-bf4e-4b1f61411294', 'hr_manager', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '0f1b3335-94c3-40b1-8555-a0cd433a00b5', NULL, '2026-11-13T22:16:09.533Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('5429e3a8-0ca6-4cb1-9e88-4a0420cd20e5', 'hr_manager', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '0f1b3335-94c3-40b1-8555-a0cd433a00b5', NULL, '2026-11-13T22:16:09.535Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('6ee88313-d715-4dc2-83dc-9b8020d277b1', 'storekeeper', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '24554214-4af9-4ac3-8473-370258d81c2b', NULL, '2026-11-13T22:16:09.537Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('57283d40-fa50-4749-ab26-4ff0b379cb24', 'storekeeper', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '24554214-4af9-4ac3-8473-370258d81c2b', NULL, '2026-11-13T22:16:09.539Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('c2f1ad62-9cf9-4acc-80d8-860fe4ff350c', 'dentist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'bcdff471-b704-4102-838c-e87d85160e15', NULL, '2026-11-13T22:16:09.540Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('de15cd6f-f1f3-4a29-94f1-0792f43ff04d', 'physiotherapist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '4f781551-abe9-45ac-aa2c-5b98e012d81c', NULL, '2026-11-13T22:16:09.542Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('812015e7-0075-402c-a28b-3074dbae5456', 'physician', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '146e591e-3576-4888-b548-183b7632f10b', NULL, '2026-11-13T22:16:09.543Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('61649ac5-ae60-408b-89e8-9d0a62b7f600', 'physician', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '1ee5d6e2-5834-4948-9de7-2707b1861154', NULL, '2026-11-13T22:16:09.544Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('ba10cda4-3731-4331-946a-d5b1fa8bc2b1', 'nurse', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'fad18ad1-e9ab-49cf-8761-2498bcfd84a8', NULL, '2026-11-13T22:16:09.546Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('8b6b260e-89c4-4dfe-8878-5dc8d842c74f', 'nurse', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'fad18ad1-e9ab-49cf-8761-2498bcfd84a8', NULL, '2026-11-13T22:16:09.547Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('fa56c1cc-765b-4513-b0c9-91e7de28a6a5', 'surgeon', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b0c453f6-4ec8-45ff-b3c5-8d196b295818', NULL, '2026-11-13T22:16:09.548Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('3286eb2b-bd8b-4e54-8288-73725f2e7551', 'anesthesiologist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b0c453f6-4ec8-45ff-b3c5-8d196b295818', NULL, '2026-11-13T22:16:09.549Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('9b107731-91a9-4f59-a8f6-f69aa269c2cb', 'or_nurse', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b0c453f6-4ec8-45ff-b3c5-8d196b295818', NULL, '2026-11-13T22:16:09.551Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('4dccd026-a622-4144-af61-544a128e7476', 'intensivist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '83d05cb7-f214-4784-9c45-7c2bec139fb3', NULL, '2026-11-13T22:16:09.553Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('5a915839-fbd0-44de-9d73-7bb4db13a8b4', 'icu_nurse', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '83d05cb7-f214-4784-9c45-7c2bec139fb3', NULL, '2026-11-13T22:16:09.555Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('2295120b-56c8-4ea9-9310-8704d88563a2', 'blood_bank_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'ce2e69a2-8077-45d5-ab08-ee41211388cc', NULL, '2026-11-13T22:16:09.556Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('d9bb83ac-0edc-489a-9416-54fdb607f3d6', 'dietitian', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'adb84318-da2e-4790-ab20-6e6265a3ab1b', NULL, '2026-11-13T22:16:09.558Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('2ced6de5-730d-4038-b3e1-1429e7e84344', 'kitchen_staff', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'adb84318-da2e-4790-ab20-6e6265a3ab1b', NULL, '2026-11-13T22:16:09.560Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('d7649f7b-2b1c-4c16-95a9-805418d0856a', 'cssd_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'aa2e3834-1cf5-478b-a755-21cdba4f1a8d', NULL, '2026-11-13T22:16:09.561Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('b9a4049d-bc59-4f04-b712-b5c829441a29', 'cssd_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'aa2e3834-1cf5-478b-a755-21cdba4f1a8d', NULL, '2026-11-13T22:16:09.563Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('07761178-3a94-4ffb-8097-1d676f8c998d', 'infection_control', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'fad18ad1-e9ab-49cf-8761-2498bcfd84a8', NULL, '2026-11-13T22:16:09.564Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('5b596af5-c1bd-4008-9664-bb86d1fea2ee', 'receptionist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '0f1b3335-94c3-40b1-8555-a0cd433a00b5', NULL, '2026-11-13T22:16:09.566Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('b7c8143f-46b6-4223-8ced-75ed50ee5192', 'records_officer', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '0f1b3335-94c3-40b1-8555-a0cd433a00b5', NULL, '2026-11-13T22:16:09.567Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('1e192547-ef57-47e0-a612-c2734f02ef63', 'lab_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T22:16:09.569Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('bfca792e-2368-49fa-b151-00eccbeeaaa0', 'lab_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '42880db0-7b02-4474-84e0-05ad76f4d2c7', NULL, '2026-11-13T22:16:09.570Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('0a46bd63-2214-45ab-9fed-faa4ef96c2f1', 'radiology_tech', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '6f1bb862-9549-4359-860b-99375b5098fc', NULL, '2026-11-13T22:16:09.571Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('2395396e-0df8-4bd4-a219-21f1a744bb5a', 'radiologist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '6f1bb862-9549-4359-860b-99375b5098fc', NULL, '2026-11-13T22:16:09.573Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('e10cd18c-de02-4cbd-ac55-1d370d928437', 'pharmacist', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '77b7fc2b-5283-4fef-8b19-2b32cc00039e', NULL, '2026-11-13T22:16:09.575Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('dfea080f-a30a-4543-a3a3-8af84de0a253', 'accountant', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '0f1b3335-94c3-40b1-8555-a0cd433a00b5', NULL, '2026-11-13T22:16:09.576Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('a78b9983-2ea3-441b-8963-47b93d41fc72', 'auditor', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '0f1b3335-94c3-40b1-8555-a0cd433a00b5', NULL, '2026-11-13T22:16:09.577Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles (user_id, role_id, facility_id, department_id, assigned_by, assigned_at) VALUES ('c2a0c6aa-1575-4092-8555-64463d7887d3', 'patient', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', NULL, NULL, '2026-11-13T22:16:09.578Z') ON CONFLICT DO NOTHING;
 
 -- Table: wards (2 rows)
-INSERT INTO public.wards (id, facility_id, name_ar, name_en, ward_type, is_active) VALUES ('2395396e-0df8-4bd4-a219-21f1a744bb5a', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'جناح عام', 'General Ward', 'general', true) ON CONFLICT DO NOTHING;
-INSERT INTO public.wards (id, facility_id, name_ar, name_en, ward_type, is_active) VALUES ('e10cd18c-de02-4cbd-ac55-1d370d928437', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'العناية المركزة', 'ICU', 'icu', true) ON CONFLICT DO NOTHING;
+INSERT INTO public.wards (id, facility_id, name_ar, name_en, ward_type, is_active) VALUES ('df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'جناح عام', 'General Ward', 'general', true) ON CONFLICT DO NOTHING;
+INSERT INTO public.wards (id, facility_id, name_ar, name_en, ward_type, is_active) VALUES ('36d00fe8-1112-4540-8980-23952ee9e5a9', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'العناية المركزة', 'ICU', 'icu', true) ON CONFLICT DO NOTHING;
 
 -- Table: rooms (8 rows)
-INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('dfea080f-a30a-4543-a3a3-8af84de0a253', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2395396e-0df8-4bd4-a219-21f1a744bb5a', 'G-01', 'standard') ON CONFLICT DO NOTHING;
-INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('c2a0c6aa-1575-4092-8555-64463d7887d3', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2395396e-0df8-4bd4-a219-21f1a744bb5a', 'G-02', 'standard') ON CONFLICT DO NOTHING;
-INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('845aacef-a084-4b6a-8dfa-4e95606e9677', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2395396e-0df8-4bd4-a219-21f1a744bb5a', 'G-03', 'standard') ON CONFLICT DO NOTHING;
-INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('ea9dedf5-91b7-480b-932f-e0eabf0411d2', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2395396e-0df8-4bd4-a219-21f1a744bb5a', 'G-04', 'standard') ON CONFLICT DO NOTHING;
-INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('cbdec658-b77d-4259-84c7-df7951bc7d88', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e10cd18c-de02-4cbd-ac55-1d370d928437', 'ICU-01', 'standard') ON CONFLICT DO NOTHING;
-INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('de3620fc-c628-4485-b08a-a8b6012da25c', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e10cd18c-de02-4cbd-ac55-1d370d928437', 'ICU-02', 'standard') ON CONFLICT DO NOTHING;
-INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('316dbf29-3de6-4cd6-bca0-179f35a467c1', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e10cd18c-de02-4cbd-ac55-1d370d928437', 'ICU-03', 'standard') ON CONFLICT DO NOTHING;
-INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('21a423c5-6f57-4317-bfef-f20b54a10620', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e10cd18c-de02-4cbd-ac55-1d370d928437', 'ICU-04', 'standard') ON CONFLICT DO NOTHING;
+INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('b213407c-eacb-4f58-bbcf-eea3a58179c3', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', 'G-01', 'standard') ON CONFLICT DO NOTHING;
+INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('48063f43-e7b8-4477-a321-9b3782666807', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', 'G-02', 'standard') ON CONFLICT DO NOTHING;
+INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('b09b1d27-0b55-4780-9e67-be2ea054ab11', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', 'G-03', 'standard') ON CONFLICT DO NOTHING;
+INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('a2731956-9cb9-4853-8b73-06c21089c19f', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', 'G-04', 'standard') ON CONFLICT DO NOTHING;
+INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('beadabff-0f23-4c0e-a35c-4f84afcc98a0', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '36d00fe8-1112-4540-8980-23952ee9e5a9', 'ICU-01', 'standard') ON CONFLICT DO NOTHING;
+INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('2edd70ae-ad4b-4ca5-869f-55bcea8d3ee5', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '36d00fe8-1112-4540-8980-23952ee9e5a9', 'ICU-02', 'standard') ON CONFLICT DO NOTHING;
+INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('49f7c315-7a7d-4170-b077-316020a55bd8', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '36d00fe8-1112-4540-8980-23952ee9e5a9', 'ICU-03', 'standard') ON CONFLICT DO NOTHING;
+INSERT INTO public.rooms (id, facility_id, ward_id, room_no, room_type) VALUES ('799765fe-e66a-4943-b04f-3a2e18f79279', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '36d00fe8-1112-4540-8980-23952ee9e5a9', 'ICU-04', 'standard') ON CONFLICT DO NOTHING;
 
 -- Table: beds (8 rows)
-INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('a78b9983-2ea3-441b-8963-47b93d41fc72', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2395396e-0df8-4bd4-a219-21f1a744bb5a', 'dfea080f-a30a-4543-a3a3-8af84de0a253', 'A', 'available') ON CONFLICT DO NOTHING;
-INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('79819c3b-7a4a-4c58-af52-eafc705559f1', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2395396e-0df8-4bd4-a219-21f1a744bb5a', 'c2a0c6aa-1575-4092-8555-64463d7887d3', 'A', 'available') ON CONFLICT DO NOTHING;
-INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('5ae717f9-7d86-4454-934b-e9b78a4791ff', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2395396e-0df8-4bd4-a219-21f1a744bb5a', '845aacef-a084-4b6a-8dfa-4e95606e9677', 'A', 'available') ON CONFLICT DO NOTHING;
-INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('d05b5ce6-ea22-401d-9c75-b95e9b616558', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2395396e-0df8-4bd4-a219-21f1a744bb5a', 'ea9dedf5-91b7-480b-932f-e0eabf0411d2', 'A', 'available') ON CONFLICT DO NOTHING;
-INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('bf785000-061e-4248-b2c7-8a94628ff5df', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e10cd18c-de02-4cbd-ac55-1d370d928437', 'de3620fc-c628-4485-b08a-a8b6012da25c', 'A', 'available') ON CONFLICT DO NOTHING;
-INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('e4965b65-aa8b-437b-a94a-fc4b0a231a9b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e10cd18c-de02-4cbd-ac55-1d370d928437', '316dbf29-3de6-4cd6-bca0-179f35a467c1', 'A', 'available') ON CONFLICT DO NOTHING;
-INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('2ebf6eb5-8a30-407b-89d4-0b2d2f38eade', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e10cd18c-de02-4cbd-ac55-1d370d928437', '21a423c5-6f57-4317-bfef-f20b54a10620', 'A', 'available') ON CONFLICT DO NOTHING;
-INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('cd769e35-f1a2-4c3c-8847-d77ff5fc9d81', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e10cd18c-de02-4cbd-ac55-1d370d928437', 'cbdec658-b77d-4259-84c7-df7951bc7d88', 'A', 'occupied') ON CONFLICT DO NOTHING;
+INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('716617f0-e22b-4d46-a299-ea3ea2ad9926', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', 'b213407c-eacb-4f58-bbcf-eea3a58179c3', 'A', 'available') ON CONFLICT DO NOTHING;
+INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('2978f8c8-3b26-4b1e-be06-11223675d990', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', '48063f43-e7b8-4477-a321-9b3782666807', 'A', 'available') ON CONFLICT DO NOTHING;
+INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('51bd05ee-2bfa-4976-8f87-8430fc65d3bf', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', 'b09b1d27-0b55-4780-9e67-be2ea054ab11', 'A', 'available') ON CONFLICT DO NOTHING;
+INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('6c493198-6f0a-485a-bd28-aec5a420ce09', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'df5aaa3e-b2c2-4bad-b8a7-e50e2c84b498', 'a2731956-9cb9-4853-8b73-06c21089c19f', 'A', 'available') ON CONFLICT DO NOTHING;
+INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('b4ebd4a3-ddd5-4bc2-a2d0-669213a5ecf1', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '36d00fe8-1112-4540-8980-23952ee9e5a9', '2edd70ae-ad4b-4ca5-869f-55bcea8d3ee5', 'A', 'available') ON CONFLICT DO NOTHING;
+INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('93ad0d95-6962-41ed-a218-6fd761fefa22', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '36d00fe8-1112-4540-8980-23952ee9e5a9', '49f7c315-7a7d-4170-b077-316020a55bd8', 'A', 'available') ON CONFLICT DO NOTHING;
+INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('4229d5de-74a7-45ea-9f11-a4b7ee0e21de', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '36d00fe8-1112-4540-8980-23952ee9e5a9', '799765fe-e66a-4943-b04f-3a2e18f79279', 'A', 'available') ON CONFLICT DO NOTHING;
+INSERT INTO public.beds (id, facility_id, ward_id, room_id, bed_no, status) VALUES ('16446b66-89fa-47c2-be92-0c1e9fd47941', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '36d00fe8-1112-4540-8980-23952ee9e5a9', 'beadabff-0f23-4c0e-a35c-4f84afcc98a0', 'A', 'occupied') ON CONFLICT DO NOTHING;
 
 -- Table: lab_tests (5 rows)
 INSERT INTO public.lab_tests (code, name_ar, name_en, specimen, unit, ref_low, ref_high, critical_low, critical_high, price) VALUES ('718-7', 'الهيموغلوبين', 'Hemoglobin', 'blood', 'g/dL', '13', '17', '7', '20', '25.00') ON CONFLICT DO NOTHING;
@@ -3453,44 +3988,106 @@ INSERT INTO public.lab_tests (code, name_ar, name_en, specimen, unit, ref_low, r
 INSERT INTO public.lab_tests (code, name_ar, name_en, specimen, unit, ref_low, ref_high, critical_low, critical_high, price) VALUES ('4548-4', 'الهيموغلوبين السكري', 'HbA1c', 'blood', '%', '4', '5.7', NULL, '12', '60.00') ON CONFLICT DO NOTHING;
 
 -- Table: drugs (6 rows)
-INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('4dccd026-a622-4144-af61-544a128e7476', 'DRG-PARA', 'باراسيتامول 500 ملغ', 'Paracetamol 500mg', 'tablet', '500mg', false, true, '5.00', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('2295120b-56c8-4ea9-9310-8704d88563a2', 'DRG-AMOX', 'أموكسيسيلين 500 ملغ', 'Amoxicillin 500mg', 'capsule', '500mg', false, true, '18.00', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('2ced6de5-730d-4038-b3e1-1429e7e84344', 'DRG-IBU', 'إيبوبروفين 400 ملغ', 'Ibuprofen 400mg', 'tablet', '400mg', false, true, '8.00', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('b9a4049d-bc59-4f04-b712-b5c829441a29', 'DRG-WARF', 'وارفارين 5 ملغ', 'Warfarin 5mg', 'tablet', '5mg', true, true, '22.00', true) ON CONFLICT DO NOTHING;
-INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('5b596af5-c1bd-4008-9664-bb86d1fea2ee', 'DRG-ASP', 'أسبرين 81 ملغ', 'Aspirin 81mg', 'tablet', '81mg', false, true, '7.00', false) ON CONFLICT DO NOTHING;
-INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('1e192547-ef57-47e0-a612-c2734f02ef63', 'DRG-METF', 'ميتفورمين 500 ملغ', 'Metformin 500mg', 'tablet', '500mg', false, true, '12.00', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('bf785000-061e-4248-b2c7-8a94628ff5df', 'DRG-PARA', 'باراسيتامول 500 ملغ', 'Paracetamol 500mg', 'tablet', '500mg', false, true, '5.00', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('e4965b65-aa8b-437b-a94a-fc4b0a231a9b', 'DRG-AMOX', 'أموكسيسيلين 500 ملغ', 'Amoxicillin 500mg', 'capsule', '500mg', false, true, '18.00', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('2ebf6eb5-8a30-407b-89d4-0b2d2f38eade', 'DRG-IBU', 'إيبوبروفين 400 ملغ', 'Ibuprofen 400mg', 'tablet', '400mg', false, true, '8.00', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('062d3260-5a1b-443f-a643-44179d7cefc5', 'DRG-WARF', 'وارفارين 5 ملغ', 'Warfarin 5mg', 'tablet', '5mg', true, true, '22.00', true) ON CONFLICT DO NOTHING;
+INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('b3a2ba77-27bb-47ce-99dd-2db515a8f3c8', 'DRG-ASP', 'أسبرين 81 ملغ', 'Aspirin 81mg', 'tablet', '81mg', false, true, '7.00', false) ON CONFLICT DO NOTHING;
+INSERT INTO public.drugs (id, code, name_ar, name_en, form, strength, is_controlled, is_active, price, is_high_alert) VALUES ('9ed60a89-f47d-4b98-94dc-8aafb4bb38d1', 'DRG-METF', 'ميتفورمين 500 ملغ', 'Metformin 500mg', 'tablet', '500mg', false, true, '12.00', false) ON CONFLICT DO NOTHING;
 
 -- Table: drug_batches (6 rows)
-INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('d9bb83ac-0edc-489a-9416-54fdb607f3d6', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2295120b-56c8-4ea9-9310-8704d88563a2', 'B-AMOX-001', '2027-12-18T00:00:00.000Z', '500.00', '12.60', '2026-11-13T02:16:55.821Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('d7649f7b-2b1c-4c16-95a9-805418d0856a', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2ced6de5-730d-4038-b3e1-1429e7e84344', 'B-IBU-001', '2027-12-18T00:00:00.000Z', '500.00', '5.60', '2026-11-13T02:16:55.823Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('b7c8143f-46b6-4223-8ced-75ed50ee5192', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '5b596af5-c1bd-4008-9664-bb86d1fea2ee', 'B-ASP-001', '2027-12-18T00:00:00.000Z', '500.00', '4.90', '2026-11-13T02:16:55.827Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('bfca792e-2368-49fa-b151-00eccbeeaaa0', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '1e192547-ef57-47e0-a612-c2734f02ef63', 'B-METF-001', '2027-12-18T00:00:00.000Z', '440.00', '8.40', '2026-11-13T02:16:55.828Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('5a915839-fbd0-44de-9d73-7bb4db13a8b4', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '4dccd026-a622-4144-af61-544a128e7476', 'B-PARA-001', '2027-12-18T00:00:00.000Z', '472.00', '3.50', '2026-11-13T02:16:55.817Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('07761178-3a94-4ffb-8097-1d676f8c998d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b9a4049d-bc59-4f04-b712-b5c829441a29', 'B-WARF-001', '2027-12-18T00:00:00.000Z', '472.00', '15.40', '2026-11-13T02:16:55.825Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('21a423c5-6f57-4317-bfef-f20b54a10620', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'e4965b65-aa8b-437b-a94a-fc4b0a231a9b', 'B-AMOX-001', '2027-12-18T00:00:00.000Z', '500.00', '12.60', '2026-11-13T22:16:09.631Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('1d261204-a4b8-495d-b071-5653db97dbe8', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '2ebf6eb5-8a30-407b-89d4-0b2d2f38eade', 'B-IBU-001', '2027-12-18T00:00:00.000Z', '500.00', '5.60', '2026-11-13T22:16:09.632Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('1517cd6d-abaa-412e-933d-d9e6a15196c2', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3a2ba77-27bb-47ce-99dd-2db515a8f3c8', 'B-ASP-001', '2027-12-18T00:00:00.000Z', '500.00', '4.90', '2026-11-13T22:16:09.635Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('f864e5cc-ad18-478b-8d90-93c297bcdc6e', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '9ed60a89-f47d-4b98-94dc-8aafb4bb38d1', 'B-METF-001', '2027-12-18T00:00:00.000Z', '440.00', '8.40', '2026-11-13T22:16:09.636Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('316dbf29-3de6-4cd6-bca0-179f35a467c1', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'bf785000-061e-4248-b2c7-8a94628ff5df', 'B-PARA-001', '2027-12-18T00:00:00.000Z', '472.00', '3.50', '2026-11-13T22:16:09.629Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at) VALUES ('db1566ea-950c-4940-9208-6d63deef9631', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '062d3260-5a1b-443f-a643-44179d7cefc5', 'B-WARF-001', '2027-12-18T00:00:00.000Z', '472.00', '15.40', '2026-11-13T22:16:09.634Z') ON CONFLICT DO NOTHING;
 
 -- Table: drug_interactions (1 rows)
-INSERT INTO public.drug_interactions (id, drug_a_code, drug_b_code, severity, description) VALUES ('0a46bd63-2214-45ab-9fed-faa4ef96c2f1', 'DRG-WARF', 'DRG-ASP', 'major', 'زيادة خطر النزف عند الجمع بين الوارفارين والأسبرين') ON CONFLICT DO NOTHING;
+INSERT INTO public.drug_interactions (id, drug_a_code, drug_b_code, severity, description) VALUES ('47b45217-6b2f-4d2b-9fdf-a639c3d91de2', 'DRG-WARF', 'DRG-ASP', 'major', 'زيادة خطر النزف عند الجمع بين الوارفارين والأسبرين') ON CONFLICT DO NOTHING;
 
 -- Table: cssd_instrument_sets (7 rows)
-INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('d87707e0-8d9f-482d-bade-893c17cf46fc', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-01', 'طقم جراحة عامة أساسي', 'laparotomy', 42, 'OR', true, '224641b6-72c6-4d86-87dc-e3cc90e114f9', '2026-11-13T02:16:56.024Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('5ed6372d-6b0e-434e-97e9-b4548aa5f5f2', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-02', 'طقم استئصال مرارة بالمنظار', 'laparotomy', 28, 'OR', true, '224641b6-72c6-4d86-87dc-e3cc90e114f9', '2026-11-13T02:16:56.026Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('f9a98658-e61c-41de-ac36-e74bf9bb1cd4', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-03', 'طقم جراحة عظام صغرى', 'orthopedic', 55, 'OR', true, '224641b6-72c6-4d86-87dc-e3cc90e114f9', '2026-11-13T02:16:56.027Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('54bd2ec2-e54c-41d8-9fc0-280ba83a3243', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-04', 'طقم تضميد جروح', 'dressing', 12, 'INP', true, '224641b6-72c6-4d86-87dc-e3cc90e114f9', '2026-11-13T02:16:56.028Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('a527ed5b-c18b-44dc-8330-4fa476c38c3c', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-05', 'طقم ولادة', 'other', 24, 'OR', true, '224641b6-72c6-4d86-87dc-e3cc90e114f9', '2026-11-13T02:16:56.029Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('d0034863-0a36-4dfb-be4a-7db32af4019b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-06', 'طقم جراحة عامة احتياطي', 'laparotomy', 40, 'OR', true, '224641b6-72c6-4d86-87dc-e3cc90e114f9', '2026-11-13T02:16:56.030Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('da900c89-df5b-4b17-8732-ec65b0109720', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-07', 'طقم قسطرة قلبية', 'endoscopy', 18, 'OR', true, '224641b6-72c6-4d86-87dc-e3cc90e114f9', '2026-11-13T02:16:56.031Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('6a8d6ada-ba2e-46cd-bc3a-f3a1aa9bf2ba', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-01', 'طقم جراحة عامة أساسي', 'laparotomy', 42, 'OR', true, 'b9a4049d-bc59-4f04-b712-b5c829441a29', '2026-11-13T22:16:09.769Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('e522f468-9942-42e9-9a47-de308ceda784', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-02', 'طقم استئصال مرارة بالمنظار', 'laparotomy', 28, 'OR', true, 'b9a4049d-bc59-4f04-b712-b5c829441a29', '2026-11-13T22:16:09.770Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('4c762742-c520-4a9e-89ab-555ffb3de114', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-03', 'طقم جراحة عظام صغرى', 'orthopedic', 55, 'OR', true, 'b9a4049d-bc59-4f04-b712-b5c829441a29', '2026-11-13T22:16:09.770Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('8694a37e-e408-481a-9afb-9f14331dbf56', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-04', 'طقم تضميد جروح', 'dressing', 12, 'INP', true, 'b9a4049d-bc59-4f04-b712-b5c829441a29', '2026-11-13T22:16:09.771Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('5dfa9dde-0f18-4622-93c0-ecedcb903235', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-05', 'طقم ولادة', 'other', 24, 'OR', true, 'b9a4049d-bc59-4f04-b712-b5c829441a29', '2026-11-13T22:16:09.772Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('69e9f4a3-209f-43c9-b6cd-044479f3ae89', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-06', 'طقم جراحة عامة احتياطي', 'laparotomy', 40, 'OR', true, 'b9a4049d-bc59-4f04-b712-b5c829441a29', '2026-11-13T22:16:09.772Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, is_active, created_by, created_at) VALUES ('3fbf5bbb-9245-46ec-8584-4e58a7ea5716', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'CSS-SET-07', 'طقم قسطرة قلبية', 'endoscopy', 18, 'OR', true, 'b9a4049d-bc59-4f04-b712-b5c829441a29', '2026-11-13T22:16:09.773Z') ON CONFLICT DO NOTHING;
 
--- Table: app_settings (11 rows)
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.consultation', '{"amount":150}'::jsonb, NULL, '2026-11-13T02:16:55.785Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.bed_day', '{"amount":400}'::jsonb, NULL, '2026-11-13T02:16:55.787Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.er_visit', '{"amount":200}'::jsonb, NULL, '2026-11-13T02:16:55.788Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.surgery_case', '{"amount":3500}'::jsonb, NULL, '2026-11-13T02:16:55.789Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.anesthesia_case', '{"amount":1200}'::jsonb, NULL, '2026-11-13T02:16:55.790Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_xray', '{"amount":150}'::jsonb, NULL, '2026-11-13T02:16:55.790Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_ct', '{"amount":650}'::jsonb, NULL, '2026-11-13T02:16:55.791Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_mri', '{"amount":1100}'::jsonb, NULL, '2026-11-13T02:16:55.791Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_us', '{"amount":300}'::jsonb, NULL, '2026-11-13T02:16:55.792Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_mammography', '{"amount":400}'::jsonb, NULL, '2026-11-13T02:16:55.793Z') ON CONFLICT DO NOTHING;
-INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_fluoroscopy', '{"amount":500}'::jsonb, NULL, '2026-11-13T02:16:55.793Z') ON CONFLICT DO NOTHING;
+-- Table: inventory_warehouses (4 rows)
+INSERT INTO public.inventory_warehouses (id, facility_id, code, name_ar, name_en, warehouse_type, department_id, is_active, created_by, created_at) VALUES ('b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'WH-MAIN', 'المستودع الطبي الرئيسي', 'Main Medical Warehouse', 'main', '24554214-4af9-4ac3-8473-370258d81c2b', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.836Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_warehouses (id, facility_id, code, name_ar, name_en, warehouse_type, department_id, is_active, created_by, created_at) VALUES ('64078600-5b74-418d-a4b6-ff37c229c9b5', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'WH-SURG', 'مستودع العمليات والجراحة', 'Surgical & OR Store', 'surgical', 'b0c453f6-4ec8-45ff-b3c5-8d196b295818', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.836Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_warehouses (id, facility_id, code, name_ar, name_en, warehouse_type, department_id, is_active, created_by, created_at) VALUES ('ee603741-9c0e-4ef6-8441-0e2ec77ec55f', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'WH-DENT', 'مستودع عيادة الأسنان', 'Dental Supplies Store', 'dental', 'bcdff471-b704-4102-838c-e87d85160e15', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.836Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_warehouses (id, facility_id, code, name_ar, name_en, warehouse_type, department_id, is_active, created_by, created_at) VALUES ('9b028170-e19c-441d-9fe1-4388278765a2', '827238b5-70ce-49fc-9c35-5d97ba97fb9d', 'WH-JED-MAIN', 'المستودع الرئيسي — فرع جدة', 'Jeddah Branch Main Store', 'main', NULL, true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.836Z') ON CONFLICT DO NOTHING;
+
+-- Table: inventory_items (6 rows)
+INSERT INTO public.inventory_items (id, facility_id, sku, name_ar, name_en, category, unit, reorder_level, unit_cost, is_active, created_by, created_at) VALUES ('b89dc0c5-ceaf-4b4b-9922-5ccb0c78be07', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'SKU-PPE-001', 'قفازات فحص نيتريل معقمة (علبة ١٠٠)', 'Sterile Nitrile Gloves (100/box)', 'ppe', 'علبة', '30.00', '28.00', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.838Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_items (id, facility_id, sku, name_ar, name_en, category, unit, reorder_level, unit_cost, is_active, created_by, created_at) VALUES ('afc024bc-4fae-467a-9a8e-58851581f92a', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'SKU-CNS-002', 'قثاطر وريدية طرفية مقاس 20G', 'IV Cannula 20G', 'consumables', 'قطعة', '50.00', '4.50', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.845Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_items (id, facility_id, sku, name_ar, name_en, category, unit, reorder_level, unit_cost, is_active, created_by, created_at) VALUES ('dd0f449c-113d-49f5-99f2-4ab51951d85a', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'SKU-SRG-003', 'خيوط جراحية قابلة للامتصاص Vicryl 2-0', 'Vicryl Suture 2-0', 'surgical_supplies', 'علبة', '15.00', '165.00', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.848Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_items (id, facility_id, sku, name_ar, name_en, category, unit, reorder_level, unit_cost, is_active, created_by, created_at) VALUES ('a4f78a8e-ad29-440e-8c2a-d268ccda6c2f', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'SKU-LAB-004', 'أنابيب سحب دم EDTA بنفسجية', 'EDTA Blood Collection Tubes', 'lab_reagents', 'حزمة', '20.00', '42.00', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.850Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_items (id, facility_id, sku, name_ar, name_en, category, unit, reorder_level, unit_cost, is_active, created_by, created_at) VALUES ('cf86dd3c-adab-4c76-9a44-1e1b65cf7e2a', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'SKU-DNT-005', 'كبسولات كومبوزيت ضوئي ترميمي للأسنان', 'Light-Cure Dental Composite Capsules', 'dental_supplies', 'علبة', '10.00', '210.00', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.852Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_items (id, facility_id, sku, name_ar, name_en, category, unit, reorder_level, unit_cost, is_active, created_by, created_at) VALUES ('9a822776-b38e-4c02-a5ba-9726f934fa05', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'SKU-PHY-006', 'أقطاب تحفيز كهربائي لاصقة (TENS Electrodes)', 'TENS Adhesive Electrodes Pack', 'physio_supplies', 'طقم', '12.00', '35.00', true, '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.854Z') ON CONFLICT DO NOTHING;
+
+-- Table: inventory_stock (6 rows)
+INSERT INTO public.inventory_stock (id, facility_id, warehouse_id, item_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at, updated_at) VALUES ('57513e5e-9f38-4291-9ab1-e2a50fd13a9d', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', 'b89dc0c5-ceaf-4b4b-9922-5ccb0c78be07', 'LOT-GLV-26A', '2027-09-29T00:00:00.000Z', '120.00', '28.00', '2026-11-13T22:16:09.840Z', '2026-11-13T22:16:09.840Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_stock (id, facility_id, warehouse_id, item_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at, updated_at) VALUES ('7930799a-786a-46ab-94bd-941fed4cab1b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', 'afc024bc-4fae-467a-9a8e-58851581f92a', 'LOT-IVC-26B', '2027-12-18T00:00:00.000Z', '200.00', '4.50', '2026-11-13T22:16:09.846Z', '2026-11-13T22:16:09.846Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_stock (id, facility_id, warehouse_id, item_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at, updated_at) VALUES ('78e2de5c-c0ba-4c35-99fb-ed86869ced82', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '64078600-5b74-418d-a4b6-ff37c229c9b5', 'dd0f449c-113d-49f5-99f2-4ab51951d85a', 'LOT-VIC-26C', '2027-08-20T00:00:00.000Z', '8.00', '165.00', '2026-11-13T22:16:09.849Z', '2026-11-13T22:16:09.849Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_stock (id, facility_id, warehouse_id, item_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at, updated_at) VALUES ('83a6e77b-0cfc-4616-9df5-fc3218028a14', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', 'a4f78a8e-ad29-440e-8c2a-d268ccda6c2f', 'LOT-EDT-26D', '2027-07-21T00:00:00.000Z', '65.00', '42.00', '2026-11-13T22:16:09.851Z', '2026-11-13T22:16:09.851Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_stock (id, facility_id, warehouse_id, item_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at, updated_at) VALUES ('24e38052-05fb-486a-b4fd-e64839e721c9', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'ee603741-9c0e-4ef6-8441-0e2ec77ec55f', 'cf86dd3c-adab-4c76-9a44-1e1b65cf7e2a', 'LOT-CMP-26E', '2027-11-08T00:00:00.000Z', '24.00', '210.00', '2026-11-13T22:16:09.853Z', '2026-11-13T22:16:09.853Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_stock (id, facility_id, warehouse_id, item_id, batch_no, expiry_date, qty_on_hand, unit_cost, received_at, updated_at) VALUES ('58de4b0d-da4b-419b-a500-95c623b0eed2', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', '9a822776-b38e-4c02-a5ba-9726f934fa05', 'LOT-TNS-26F', '2028-03-27T00:00:00.000Z', '40.00', '35.00', '2026-11-13T22:16:09.855Z', '2026-11-13T22:16:09.855Z') ON CONFLICT DO NOTHING;
+
+-- Table: inventory_requisitions (2 rows)
+INSERT INTO public.inventory_requisitions (id, facility_id, req_no, warehouse_id, department_id, item_id, qty_requested, qty_issued, priority, status, notes, requested_by, issued_by, issued_at, reject_reason, created_at) VALUES ('7d454b99-d052-4ae6-9e2a-9ab82d5eb98b', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'REQ-000001', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', 'fad18ad1-e9ab-49cf-8761-2498bcfd84a8', 'afc024bc-4fae-467a-9a8e-58851581f92a', '15.00', '15.00', 'routine', 'issued', 'تزويد جناح التنويم بمستلزمات القثاطر الوريدية الأسبوعية', 'ba10cda4-3731-4331-946a-d5b1fa8bc2b1', '57283d40-fa50-4749-ab26-4ff0b379cb24', '2026-11-13T16:16:09.856Z', NULL, '2026-11-13T22:16:09.856Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_requisitions (id, facility_id, req_no, warehouse_id, department_id, item_id, qty_requested, qty_issued, priority, status, notes, requested_by, issued_by, issued_at, reject_reason, created_at) VALUES ('a85d8cb8-152a-4d44-aa78-c5835ba2aec4', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'REQ-000002', 'ee603741-9c0e-4ef6-8441-0e2ec77ec55f', 'bcdff471-b704-4102-838c-e87d85160e15', 'cf86dd3c-adab-4c76-9a44-1e1b65cf7e2a', '4.00', '0.00', 'urgent', 'pending', 'احتياج عيادة الأسنان لحشوات كومبوزيت إضافية لجدول الغد', 'c2f1ad62-9cf9-4acc-80d8-860fe4ff350c', NULL, NULL, NULL, '2026-11-13T22:16:09.856Z') ON CONFLICT DO NOTHING;
+
+-- Table: inventory_movements (6 rows)
+INSERT INTO public.inventory_movements (id, facility_id, warehouse_id, item_id, stock_id, movement_type, quantity, reference_type, reference_id, reason, performed_by, created_at) VALUES ('7dba59e3-8f29-4ee4-ac9d-629b8558c9ef', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', 'b89dc0c5-ceaf-4b4b-9922-5ccb0c78be07', '57513e5e-9f38-4291-9ab1-e2a50fd13a9d', 'receipt', '120.00', 'initial_stock', NULL, 'رصيد افتتاحي معتمد للمستودع', '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.842Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_movements (id, facility_id, warehouse_id, item_id, stock_id, movement_type, quantity, reference_type, reference_id, reason, performed_by, created_at) VALUES ('c2300d23-90d1-4837-8d95-7d1f9dcf31b2', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', 'afc024bc-4fae-467a-9a8e-58851581f92a', '7930799a-786a-46ab-94bd-941fed4cab1b', 'receipt', '200.00', 'initial_stock', NULL, 'رصيد افتتاحي معتمد للمستودع', '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.846Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_movements (id, facility_id, warehouse_id, item_id, stock_id, movement_type, quantity, reference_type, reference_id, reason, performed_by, created_at) VALUES ('c51c0b83-1ffa-4e49-8824-aa5e6aee947e', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', '64078600-5b74-418d-a4b6-ff37c229c9b5', 'dd0f449c-113d-49f5-99f2-4ab51951d85a', '78e2de5c-c0ba-4c35-99fb-ed86869ced82', 'receipt', '8.00', 'initial_stock', NULL, 'رصيد افتتاحي معتمد للمستودع', '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.850Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_movements (id, facility_id, warehouse_id, item_id, stock_id, movement_type, quantity, reference_type, reference_id, reason, performed_by, created_at) VALUES ('113f644e-8e99-4e72-9fe4-7189df770ced', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', 'a4f78a8e-ad29-440e-8c2a-d268ccda6c2f', '83a6e77b-0cfc-4616-9df5-fc3218028a14', 'receipt', '65.00', 'initial_stock', NULL, 'رصيد افتتاحي معتمد للمستودع', '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.851Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_movements (id, facility_id, warehouse_id, item_id, stock_id, movement_type, quantity, reference_type, reference_id, reason, performed_by, created_at) VALUES ('8227c1c9-ce0a-4c1b-a556-9182de483243', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'ee603741-9c0e-4ef6-8441-0e2ec77ec55f', 'cf86dd3c-adab-4c76-9a44-1e1b65cf7e2a', '24e38052-05fb-486a-b4fd-e64839e721c9', 'receipt', '24.00', 'initial_stock', NULL, 'رصيد افتتاحي معتمد للمستودع', '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.853Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.inventory_movements (id, facility_id, warehouse_id, item_id, stock_id, movement_type, quantity, reference_type, reference_id, reason, performed_by, created_at) VALUES ('90e8ad80-4044-40cb-81d3-2cb04e0c8159', 'dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'b3470f77-dbd3-4dd1-8e3f-314d39b1ab21', '9a822776-b38e-4c02-a5ba-9726f934fa05', '58de4b0d-da4b-419b-a500-95c623b0eed2', 'receipt', '40.00', 'initial_stock', NULL, 'رصيد افتتاحي معتمد للمستودع', '6ee88313-d715-4dc2-83dc-9b8020d277b1', '2026-11-13T22:16:09.855Z') ON CONFLICT DO NOTHING;
+
+-- Table: number_sequences (25 rows)
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'appointment', 4) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'mrn', 6) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'er_mrn', 1) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'encounter', 6) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'lab_order', 3) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'prescription', 3) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'invoice', 2) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'claim', 1) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'admission', 3) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'surgery', 2) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'icu_stay', 2) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'imaging', 4) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'blood_donor', 8) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'blood_unit', 15) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'blood_request', 2) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'nutrition_order', 2) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'nutrition_tray', 5) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'cssd_pack', 8) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'cssd_load', 4) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'hr_employee', 10) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'hr_leave', 3) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'inv_req', 3) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'dental_proc', 3) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'physio_ref', 3) ON CONFLICT DO NOTHING;
+INSERT INTO public.number_sequences (facility_id, name, next_value) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'physio_sess', 3) ON CONFLICT DO NOTHING;
+
+-- Table: app_settings (12 rows)
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.consultation', '{"amount":150}'::jsonb, NULL, '2026-11-13T22:16:09.597Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.bed_day', '{"amount":400}'::jsonb, NULL, '2026-11-13T22:16:09.598Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.er_visit', '{"amount":200}'::jsonb, NULL, '2026-11-13T22:16:09.599Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.surgery_case', '{"amount":3500}'::jsonb, NULL, '2026-11-13T22:16:09.599Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.anesthesia_case', '{"amount":1200}'::jsonb, NULL, '2026-11-13T22:16:09.600Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_xray', '{"amount":150}'::jsonb, NULL, '2026-11-13T22:16:09.600Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_ct', '{"amount":650}'::jsonb, NULL, '2026-11-13T22:16:09.601Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_mri', '{"amount":1100}'::jsonb, NULL, '2026-11-13T22:16:09.601Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_us', '{"amount":300}'::jsonb, NULL, '2026-11-13T22:16:09.602Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_mammography', '{"amount":400}'::jsonb, NULL, '2026-11-13T22:16:09.602Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_fluoroscopy', '{"amount":500}'::jsonb, NULL, '2026-11-13T22:16:09.603Z') ON CONFLICT DO NOTHING;
+INSERT INTO public.app_settings (facility_id, key, value, updated_by, updated_at) VALUES ('dc9b5128-7621-4788-98d3-f5ebc70ea03a', 'pricing.imaging_panoramic', '{"amount":180}'::jsonb, NULL, '2026-11-13T22:16:09.603Z') ON CONFLICT DO NOTHING;
 
 COMMIT;

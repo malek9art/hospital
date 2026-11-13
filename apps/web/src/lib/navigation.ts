@@ -5,17 +5,20 @@ export type PageKey =
   | 'patients'
   | 'appointments'
   | 'clinic'
+  | 'dental'
   | 'emergency'
   | 'inpatient'
   | 'nursing'
   | 'surgery'
   | 'icu'
+  | 'physiotherapy'
   | 'bloodbank'
   | 'nutrition'
   | 'cssd'
   | 'lab'
   | 'radiology'
   | 'pharmacy'
+  | 'inventory'
   | 'billing'
   | 'hr'
   | 'reports'
@@ -80,6 +83,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: 'M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z',
   },
   {
+    key: 'dental',
+    group: 'clinical',
+    labelAr: 'عيادة الأسنان',
+    labelEn: 'Dental Clinic',
+    perms: ['dental.read', 'dental.chart', 'dental.perform'],
+    icon: 'M7 3c-2.2 0-4 1.8-4 4.2 0 2.1.9 3.7 1.6 5.5.7 1.8 1 6.3 2.7 6.3 1.3 0 1.8-3.6 3.1-3.6h3.2c1.3 0 1.8 3.6 3.1 3.6 1.7 0 2-4.5 2.7-6.3.7-1.8 1.6-3.4 1.6-5.5C21 4.8 19.2 3 17 3c-1.8 0-3.3 1-5 1S8.8 3 7 3z',
+  },
+  {
     key: 'emergency',
     group: 'clinical',
     labelAr: 'الطوارئ والفرز',
@@ -120,11 +131,19 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: 'M3 13h2l2-5 4 10 3-7 2 2h5v-2h-4l-3-3-3 7-4-10-3 6H3v2z',
   },
   {
+    key: 'physiotherapy',
+    group: 'clinical',
+    labelAr: 'العلاج الطبيعي',
+    labelEn: 'Physical Therapy',
+    perms: ['physio.read', 'physio.refer', 'physio.perform'],
+    icon: 'M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7z',
+  },
+  {
     key: 'lab',
     group: 'operations',
-    labelAr: 'المختبر',
-    labelEn: 'Laboratory',
-    perms: ['lab.sample.collect', 'lab.result.verify'],
+    labelAr: 'المختبرات',
+    labelEn: 'Laboratories',
+    perms: ['lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.result.amend', 'lab.critical.ack'],
     icon: 'M7 2v2h1v5.17L4.23 16.7A2 2 0 006.02 20h11.96a2 2 0 001.79-3.3L16 9.17V4h1V2H7zm4 8.5V4h2v6.5l3.5 7H7.5l3.5-7z',
   },
   {
@@ -150,6 +169,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
     labelEn: 'Blood Bank',
     perms: ['bloodbank.read'],
     icon: 'M12 2c-5.33 4.55-8 8.48-8 11.8 0 4.98 3.8 8.2 8 8.2s8-3.22 8-8.2c0-3.32-2.67-7.25-8-11.8z',
+  },
+  {
+    key: 'inventory',
+    group: 'operations',
+    labelAr: 'المخازن والإمداد',
+    labelEn: 'Medical Stores',
+    perms: ['inventory.read', 'inventory.request', 'inventory.stock', 'inventory.manage', 'inventory.issue'],
+    icon: 'M20 2H4c-1 0-2 .9-2 2v3.01c0 .72.43 1.34 1 1.69V20c0 1.1 1.1 2 2 2h14c.9 0 2-.9 2-2V8.7c.57-.35 1-.97 1-1.69V4c0-1.1-1-2-2-2zm-5 12H9v-2h6v2zm5-7H4V4h16v3z',
   },
   {
     key: 'nutrition',

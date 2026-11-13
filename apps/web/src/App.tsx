@@ -20,17 +20,20 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const PatientsPage = lazy(() => import('./pages/PatientsPage'));
 const AppointmentsPage = lazy(() => import('./pages/AppointmentsPage'));
 const ClinicPage = lazy(() => import('./pages/ClinicPage'));
+const DentalPage = lazy(() => import('./pages/DentalPage'));
 const EmergencyPage = lazy(() => import('./pages/EmergencyPage'));
 const InpatientPage = lazy(() => import('./pages/InpatientPage'));
 const NursingPage = lazy(() => import('./pages/NursingPage'));
 const SurgeryPage = lazy(() => import('./pages/SurgeryPage'));
 const IcuPage = lazy(() => import('./pages/IcuPage'));
+const PhysiotherapyPage = lazy(() => import('./pages/PhysiotherapyPage'));
 const BloodBankPage = lazy(() => import('./pages/BloodBankPage'));
 const NutritionPage = lazy(() => import('./pages/NutritionPage'));
 const CssdPage = lazy(() => import('./pages/CssdPage'));
 const LabPage = lazy(() => import('./pages/LabPage'));
 const RadiologyPage = lazy(() => import('./pages/RadiologyPage'));
 const PharmacyPage = lazy(() => import('./pages/PharmacyPage'));
+const InventoryPage = lazy(() => import('./pages/InventoryPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
 const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 const AuditPage = lazy(() => import('./pages/AuditPage'));
@@ -160,6 +163,8 @@ function AppContent() {
         return <AppointmentsPage auth={auth} />;
       case 'clinic':
         return <ClinicPage auth={auth} routeId={route.id} />;
+      case 'dental':
+        return <DentalPage auth={auth} />;
       case 'emergency':
         return <EmergencyPage auth={auth} />;
       case 'inpatient':
@@ -170,6 +175,8 @@ function AppContent() {
         return <SurgeryPage auth={auth} />;
       case 'icu':
         return <IcuPage auth={auth} />;
+      case 'physiotherapy':
+        return <PhysiotherapyPage auth={auth} />;
       case 'bloodbank':
         return <BloodBankPage auth={auth} />;
       case 'nutrition':
@@ -182,6 +189,8 @@ function AppContent() {
         return <RadiologyPage auth={auth} />;
       case 'pharmacy':
         return <PharmacyPage auth={auth} />;
+      case 'inventory':
+        return <InventoryPage auth={auth} />;
       case 'billing':
         return <BillingPage auth={auth} routeId={route.id} />;
       case 'reports':

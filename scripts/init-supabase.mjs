@@ -8,15 +8,15 @@
  * Modes:
  *   1. `npm run db:supabase:sql` (`node scripts/init-supabase.mjs --emit-sql`)
  *      Generates:
- *        - `db/supabase-schema.sql`    : All 19 migrations (89 tables, RLS, roles, anon lockdown)
- *        - `db/supabase-full-init.sql` : All 19 migrations + 2 facilities, 8 departments,
- *                                        25 roles, 98 permissions, all 29 demo login accounts
+ *        - `db/supabase-schema.sql`    : All 20 migrations (98 tables, RLS, roles, anon lockdown)
+ *        - `db/supabase-full-init.sql` : All 20 migrations + 2 facilities, 30 departments (15x2),
+ *                                        28 roles, 110 permissions, all 33 demo login accounts
  *                                        (Argon2id), wards/rooms/beds, lab tests, drugs & batches,
- *                                        and CSSD sets — ready to paste into Supabase SQL Editor!
+ *                                        CSSD sets, and Medical Stores warehouses/catalog/stock!
  *
  *   2. `npm run db:supabase:init`
  *      Connects to `aws-0-ap-northeast-2.pooler.supabase.com:5432` via `DATABASE_URL` or
- *      `SUPABASE_DB_PASSWORD`, applies all 19 migrations, and seeds full demo clinical data.
+ *      `SUPABASE_DB_PASSWORD`, applies all 20 migrations, and seeds full demo clinical data.
  */
 
 import crypto from 'node:crypto';
@@ -143,6 +143,12 @@ async function generateSqlBundles() {
         'drug_batches',
         'drug_interactions',
         'cssd_instrument_sets',
+        'inventory_warehouses',
+        'inventory_items',
+        'inventory_stock',
+        'inventory_requisitions',
+        'inventory_movements',
+        'number_sequences',
         'app_settings',
       ];
       const dump = {};
@@ -178,7 +184,7 @@ async function generateSqlBundles() {
 
   const seedLines = [];
   seedLines.push(`\n-- ============================================================================`);
-  seedLines.push(`-- Operational & Authentication Seed (29 Demo Accounts + Reference Catalog)`);
+  seedLines.push(`-- Operational & Authentication Seed (33 Demo Accounts + Reference Catalog)`);
   seedLines.push(`-- ============================================================================\n`);
   for (const [tableName, { cols, rows }] of Object.entries(dump)) {
     if (!rows.length) continue;
@@ -195,9 +201,9 @@ async function generateSqlBundles() {
     `-- HMS Enterprise — Complete 1-Click Supabase SQL Editor Bootstrap`,
     `-- Project : https://pxawcoccgcuzoustyugh.supabase.co`,
     `-- Pooler  : aws-0-ap-northeast-2.pooler.supabase.com:5432 (user: postgres.pxawcoccgcuzoustyugh)`,
-    `-- Includes: All ${files.length} migrations (89 tables + RLS + PostgREST anon lockdown)`,
-    `--           + 2 facilities, 8 departments, 25 roles, 98 permissions,`,
-    `--           + ALL 29 demo login accounts (Argon2id), wards/beds, lab tests, drugs & CSSD sets.`,
+    `-- Includes: All ${files.length} migrations (98 tables + RLS + PostgREST anon lockdown)`,
+    `--           + 2 facilities, 30 departments (15 per facility), 28 roles, 110 permissions,`,
+    `--           + ALL 33 demo login accounts (Argon2id), wards/beds, lab tests, drugs, CSSD & Stores.`,
     `--`,
     `-- Paste into: https://supabase.com/dashboard/project/pxawcoccgcuzoustyugh/sql/new -> Run`,
     `-- ============================================================================\n`,
@@ -209,7 +215,7 @@ async function generateSqlBundles() {
 
   fs.writeFileSync(outFullPath, fullDoc, 'utf8');
   // eslint-disable-next-line no-console
-  console.log(`[supabase] wrote ${path.relative(rootDir, outFullPath)} (${files.length} migrations + 29 demo users, ${(fullDoc.length / 1024).toFixed(1)} KiB)`);
+  console.log(`[supabase] wrote ${path.relative(rootDir, outFullPath)} (${files.length} migrations + 33 demo users, ${(fullDoc.length / 1024).toFixed(1)} KiB)`);
 }
 
 const args = process.argv.slice(2);

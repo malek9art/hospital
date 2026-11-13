@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, has, type Me } from '../api';
 import {
   Badge,
@@ -7,15 +7,19 @@ import {
   DataTable,
   ErrorState,
   Input,
+  Modal,
   PageHeader,
   PageSkeleton,
+  PollingControl,
   PrintHeader,
   ReasonDialog,
   Select,
+  StatCard,
   Textarea,
   useToast,
 } from '../components';
-import { formatDateTime } from '../lib/format';
+import { usePolling } from '../hooks/usePolling';
+import { formatDateTime, formatNumber } from '../lib/format';
 
 const MODALITY_LABEL: Record<string, string> = {
   xray: 'أشعة سينية (X-Ray)',
@@ -24,6 +28,7 @@ const MODALITY_LABEL: Record<string, string> = {
   us: 'موجات فوق صوتية (Ultrasound)',
   mammography: 'ماموغرام',
   fluoroscopy: 'تنظير تألقي (Fluoroscopy)',
+  panoramic: 'بانوراما الأسنان والفكين (OPG)',
 };
 
 export default function RadiologyPage({ auth }: { auth: Me }) {
@@ -31,6 +36,8 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
   const [items, setItems] = useState<any[]>([]);
   const [status, setStatus] = useState('active');
   const [detail, setDetail] = useState<any>(null);
+  const [patients, setPatients] = useState<any[]>([]);
+  const [encounters, setEncounters] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -41,24 +48,63 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
     recommendation: '',
     critical: false,
   });
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
+  const [orderForm, setOrderForm] = useState({
+    patientId: '',
+    encounterId: '',
+    modality: 'xray',
+    bodyPart: '',
+    priority: 'routine',
+    clinicalIndication: '',
+  });
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [ackReportId, setAckReportId] = useState<string | null>(null);
+
+  const canOrder = has(auth, 'radiology.order') && has(auth, 'patient.read');
 
   const load = useCallback(async () => {
     setErr(null);
     try {
-      const r = await api<any>(`/api/radiology/worklist?status=${status}`);
+      const [r, pts] = await Promise.all([
+        api<any>(`/api/radiology/worklist?status=${status}`),
+        canOrder ? api<any>('/api/patients?limit=50').catch(() => ({ items: [] })) : Promise.resolve({ items: [] }),
+      ]);
       setItems(r.items ?? []);
+      const ptList = pts.items ?? [];
+      setPatients(ptList);
+      setOrderForm((p) => ({ ...p, patientId: p.patientId || ptList[0]?.id || '' }));
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'تعذّر تحميل قائمة عمل الأشعة');
     } finally {
       setLoading(false);
     }
-  }, [status]);
+  }, [status, canOrder]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!orderModalOpen || !orderForm.patientId || !has(auth, 'clinical.encounter.read')) return;
+    api<any>(`/api/encounters?patientId=${orderForm.patientId}&status=all`)
+      .then((res) => {
+        const list = res.items ?? [];
+        setEncounters(list);
+        const openEnc = list.find((e: any) => e.status === 'open') ?? list[0];
+        setOrderForm((p) => ({ ...p, encounterId: openEnc?.id ?? '' }));
+      })
+      .catch(() => setEncounters([]));
+  }, [orderModalOpen, orderForm.patientId, auth]);
+
+  const polling = usePolling(load, { intervalMs: 30_000, enabled: true });
+
+  const kpis = useMemo(() => {
+    const waitingPerform = items.filter((i) => ['ordered', 'in_progress'].includes(i.status)).length;
+    const waitingReport = items.filter((i) => ['performed', 'reported'].includes(i.status)).length;
+    const verifiedCount = items.filter((i) => i.status === 'verified').length;
+    const criticalCount = items.filter((i) => i.critical).length;
+    return { waitingPerform, waitingReport, verifiedCount, criticalCount };
+  }, [items]);
 
   async function openOrder(id: string) {
     try {
@@ -83,8 +129,35 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
     }
   }
 
+  async function submitNewOrder(e: React.FormEvent) {
+    e.preventDefault();
+    if (!orderForm.encounterId) return;
+    setBusy(true);
+    try {
+      const res = await api<{ orderNo: string; id: string }>('/api/radiology/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          encounterId: orderForm.encounterId,
+          modality: orderForm.modality,
+          bodyPart: orderForm.bodyPart.trim(),
+          priority: orderForm.priority,
+          clinicalIndication: orderForm.clinicalIndication.trim(),
+        }),
+      });
+      toast.success(`تم إرسال طلب التصوير الإشعاعي (${res.orderNo})`);
+      setOrderModalOpen(false);
+      setOrderForm((p) => ({ ...p, bodyPart: '', clinicalIndication: '' }));
+      await load();
+      await openOrder(res.id);
+    } catch (ex) {
+      toast.error(ex instanceof Error ? ex.message : 'تعذّر إنشاء طلب الأشعة');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (err && items.length === 0) return <ErrorState message={err} onRetry={load} />;
-  if (loading && items.length === 0) return <PageSkeleton cards={2} rows={6} />;
+  if (loading && items.length === 0) return <PageSkeleton cards={4} rows={6} />;
 
   const draft = detail?.reports?.find((r: any) => r.status === 'draft');
   const finalReport = detail?.reports?.find((r: any) => r.status === 'final');
@@ -96,7 +169,34 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
       <div className="no-print">
         <PageHeader
           title="الأشعة والتصوير الطبي (RIS)"
-          subtitle="إدارة طلبات التصوير، كتابة التقارير التشخيصية المؤرشفة، وإبلاغ النتائج الحرجة. (بدون PACS/DICOM)"
+          subtitle="إدارة طلبات التصوير (شاملة الأشعة المقطعية، الرنين، وبانوراما الفكين OPG)، التقارير المؤرشفة والملحقات التصحيحية، وإبلاغ النتائج الحرجة."
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              {canOrder && (
+                <Button variant="primary" size="sm" onClick={() => setOrderModalOpen(true)}>
+                  + طلب أشعة
+                </Button>
+              )}
+              <PollingControl
+                enabled={polling.enabled}
+                onToggle={polling.setEnabled}
+                lastUpdatedAt={polling.lastUpdatedAt}
+                busy={polling.busy}
+                onRefresh={polling.refreshNow}
+              />
+            </div>
+          }
+        />
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 no-print">
+        <StatCard label="بانتظار / قيد التصوير" value={formatNumber(kpis.waitingPerform)} tone="warning" />
+        <StatCard label="بانتظار التقرير / الاعتماد" value={formatNumber(kpis.waitingReport)} tone="info" />
+        <StatCard label="تقارير معتمدة بالعرض" value={formatNumber(kpis.verifiedCount)} tone="success" />
+        <StatCard
+          label="نتائج إشعاعية حرجة"
+          value={formatNumber(kpis.criticalCount)}
+          tone={kpis.criticalCount > 0 ? 'danger' : 'default'}
         />
       </div>
 
@@ -106,7 +206,7 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
         action={
           <Select
             aria-label="تصفية حالة طلبات الأشعة"
-            className="!w-44"
+            className="!w-48"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
           >
@@ -114,6 +214,7 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
             <option value="ordered">بانتظار التصوير</option>
             <option value="in_progress">قيد التصوير</option>
             <option value="performed">بانتظار التقرير</option>
+            <option value="reported">مسودة بانتظار الاعتماد</option>
             <option value="verified">تقارير معتمدة</option>
             <option value="cancelled">ملغاة</option>
             <option value="all">الكل</option>
@@ -135,7 +236,7 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
             </Button>
           )}
           columns={[
-            { key: 'no', header: 'رقم الطلب', render: (i) => <span className="font-mono text-xs">{i.order_no}</span> },
+            { key: 'no', header: 'رقم الطلب', render: (i) => <span className="font-mono text-xs font-bold">{i.order_no}</span> },
             {
               key: 'pt',
               header: 'المريض',
@@ -153,15 +254,15 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
               header: 'الفحص',
               render: (i) => (
                 <div>
-                  <span>{i.modality_ar}</span>
-                  <span className="block text-xs text-slate-400">{i.body_part}</span>
+                  <span className="font-semibold">{i.modality_ar}</span>
+                  <span className="block text-xs text-slate-500">{i.body_part}</span>
                 </div>
               ),
             },
             {
               key: 'pri',
               header: 'الأولوية',
-              render: (i) => <Badge value={i.priority === 'stat' ? 'stat' : i.priority === 'urgent' ? 'urgent' : 'open'} label={i.priority} />,
+              render: (i) => <Badge value={i.priority === 'stat' ? 'stat' : i.priority === 'urgent' ? 'urgent' : 'routine'} />,
             },
             {
               key: 'st',
@@ -273,7 +374,7 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
                       الإصدار #{r.version} · {r.reported_by_name} · {formatDateTime(r.reported_at)}
                     </span>
                     <div className="flex items-center gap-1.5">
-                      <Badge value={r.status === 'final' ? 'verified' : 'open'} label={r.status === 'final' ? 'نهائي معتمد' : 'مسودة'} />
+                      <Badge value={r.status === 'final' ? 'verified' : 'draft'} label={r.status === 'final' ? 'نهائي معتمد' : 'مسودة'} />
                       {r.is_critical && <Badge value="critical_high" label="نتيجة حرجة" />}
                     </div>
                   </div>
@@ -297,10 +398,10 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
               ))}
             </div>
 
-            {has(auth, 'radiology.report') && ['performed', 'reported'].includes(o.status) && !draft && (
+            {has(auth, 'radiology.report') && ['performed', 'reported', 'verified'].includes(o.status) && !draft && (
               <div className="mt-4 border-t border-slate-100 pt-3 space-y-2 no-print">
                 <h4 className="font-bold text-sm">
-                  {detail.reports.length ? 'إضافة تقرير تصحيحي (Addendum / إصدار جديد)' : 'كتابة التقرير الإشعاعي'}
+                  {detail.reports.length ? 'إضافة ملحق تصحيحي (Addendum / إصدار جديد)' : 'كتابة التقرير الإشعاعي'}
                 </h4>
                 <Textarea
                   label="النتائج التفصيلية (5 أحرف على الأقل)"
@@ -334,11 +435,13 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
                   disabled={form.findings.trim().length < 5 || form.impression.trim().length < 5}
                   onClick={() =>
                     act(
-                      () =>
-                        api(`/api/radiology/orders/${o.id}/reports`, {
+                      async () => {
+                        await api(`/api/radiology/orders/${o.id}/reports`, {
                           method: 'POST',
                           body: JSON.stringify(form),
-                        }),
+                        });
+                        setForm({ findings: '', impression: '', recommendation: '', critical: false });
+                      },
                       'حُفظ التقرير كمسودة',
                     ).catch(() => {})
                   }
@@ -376,6 +479,87 @@ export default function RadiologyPage({ auth }: { auth: Me }) {
           </Card>
         </div>
       )}
+
+      {/* Modal: New Radiology Order */}
+      <Modal open={orderModalOpen} onClose={() => setOrderModalOpen(false)} title="إنشاء طلب تصوير إشعاعي جديد">
+        <form onSubmit={submitNewOrder} className="space-y-3">
+          <Select
+            label="المريض"
+            required
+            value={orderForm.patientId}
+            onChange={(e) => setOrderForm({ ...orderForm, patientId: e.target.value })}
+          >
+            {patients.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.fullNameAr} ({p.mrn})
+              </option>
+            ))}
+          </Select>
+          <Select
+            label="الزيارة السريرية"
+            required
+            value={orderForm.encounterId}
+            onChange={(e) => setOrderForm({ ...orderForm, encounterId: e.target.value })}
+          >
+            {encounters.length === 0 && <option value="">لا توجد زيارات متاحة</option>}
+            {encounters.map((enc) => (
+              <option key={enc.id} value={enc.id}>
+                {enc.encounter_no} ({enc.status === 'open' ? 'مفتوحة' : 'مغلقة'})
+              </option>
+            ))}
+          </Select>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Select
+              label="نوع التصوير الإشعاعي"
+              value={orderForm.modality}
+              onChange={(e) => setOrderForm({ ...orderForm, modality: e.target.value })}
+            >
+              {Object.entries(MODALITY_LABEL).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </Select>
+            <Select
+              label="الأولوية"
+              value={orderForm.priority}
+              onChange={(e) => setOrderForm({ ...orderForm, priority: e.target.value })}
+            >
+              <option value="routine">روتيني</option>
+              <option value="urgent">عاجل</option>
+              <option value="stat">فوري حرج (STAT)</option>
+            </Select>
+          </div>
+          <Input
+            label="العضو / المنطقة التشريحية"
+            required
+            placeholder="مثال: الصدر PA / الفكين والأسنان / الركبة اليمنى"
+            value={orderForm.bodyPart}
+            onChange={(e) => setOrderForm({ ...orderForm, bodyPart: e.target.value })}
+          />
+          <Textarea
+            label="المبرر السريري لطلب التصوير (5 أحرف على الأقل)"
+            required
+            minLength={5}
+            rows={2}
+            value={orderForm.clinicalIndication}
+            onChange={(e) => setOrderForm({ ...orderForm, clinicalIndication: e.target.value })}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={() => setOrderModalOpen(false)}>
+              إلغاء
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              busy={busy}
+              disabled={!orderForm.encounterId || orderForm.clinicalIndication.trim().length < 5}
+            >
+              إرسال لقسم الأشعة
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <ReasonDialog
         open={cancelModalOpen}

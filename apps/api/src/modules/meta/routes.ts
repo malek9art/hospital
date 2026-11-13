@@ -32,7 +32,9 @@ export const MODULE_STATUS: readonly ModuleStatusEntry[] = [
   { key: 'nutrition', ar: 'التغذية الطبية', status: 'implemented', route: '#/nutrition', note: 'فحص تغذية تمريضي، تقييم وأهداف أخصائي التغذية، أمر تغذية مُتحقَّق من الحساسية، توليد صواني الوجبات وتتبع التحضير والتسليم والاستهلاك، وتغذية أنبوبية/وريدية بأوامر مُصدَرة', missing: 'لا قاعدة تراكيب غذائية تفصيلية ولا مخزون مطبخ؛ توزيع الطاقة ثابت ٢٥/٣٥/٣٠/١٠٪ وأهداف السعرات تقديرية.' },
   { key: 'cssd', ar: 'التعقيم ومكافحة العدوى', status: 'implemented', route: '#/cssd', note: 'دورة تعقيم كاملة (استلام ملوّث → غسل → تغليف → دورة تعقيم بمؤشرات → اعتماد من شخص آخر → إفراج بصلاحية → صرف وربط بالعملية → إعادة), سحب/حجر عند فشل المؤشر، وأوامر عزل وترصد عدوى مرتبطة بالرعاية ومراقبة نظافة الأيدي', missing: 'لا تكامل مع أجهزة الأوتوكلاف (المؤشرات يدوية)، ولا تتبع فردي للأداة داخل الطقم، وحالات العدوى وصفية بلا معدلات NHSN/CDC معدّلة.' },
   { key: 'hr', ar: 'الموارد البشرية والتراخيص الطبية', status: 'implemented', route: '#/hr', note: 'سجل الموظفين بهوية مشفرة، تراخيص مزاولة المهنة (SCFHS/MOH/BLS/ACLS) باعتماد منفصل وتنبيهات انتهاء، جدولة المناوبات بشرط ترخيص ساري للممارسين الصحيين، وطلبات الإجازات بفصل مهام وبوابة ذاتية للموظف', missing: 'لا يوجد محرك رواتب ومسيرات أجور (Payroll/WPS) ولا ربط آلي مع التأمينات الاجتماعية (GOSI) أو أجهزة البصمة.' },
-  { key: 'procurement', ar: 'المخازن والمشتريات', status: 'partial', route: '#/pharmacy', note: 'مخزون أدوية وحركات فقط', missing: 'ينقص كتالوج الأصناف الطبية/العامة غير الدوائية، المستودعات المتعددة، حد إعادة الطلب، ودورة الشراء (طلب شراء → أمر شراء → استلام → فاتورة مورد).' },
+  { key: 'dental', ar: 'عيادة الأسنان والفم', status: 'implemented', route: '#/dental', note: 'مخطط الأسنان التفاعلي (FDI 11–48 / 51–85) بسجل ملحق غير قابل للحذف، خطط وإجراءات علاجية، ربط تلقائي بحالة السن، وإدراج آلي للرسوم في فاتورة الزيارة', missing: 'لا يوجد ربط بأجهزة الأشعة السنية ثلاثية الأبعاد (CBCT DICOM) ولا قوالب تقويم رقمية CAD/CAM.' },
+  { key: 'physiotherapy', ar: 'العلاج الطبيعي والتأهيل الطبي', status: 'implemented', route: '#/physiotherapy', note: 'تحويلات التأهيل الداخلي والخارجي، التقييم الوظيفي الأولي، خطط الجلسات، قياس الألم (VAS 0–10) قبل وبعد الجلسة والمدى الحركي، وفوترة الجلسات آليًا', missing: 'لا يوجد ربط بأجهزة القياس الحركي الرقمي (Goniometry Sensors) ولا بوابة تمارين منزلية مرئية للمريض.' },
+  { key: 'procurement', ar: 'المخازن والإمداد الطبي', status: 'implemented', route: '#/inventory', note: 'مستودعات متعددة، كتالوج أصناف ومستهلكات طبية وغير دوائية، حد إعادة الطلب، توريد دفعات، صرف FEFO لطلبات الأقسام بفصل مهام، وتسويات جردية مسيّجة بسجل حركات غير قابل للتعديل', missing: 'لا توجد دورة مناقصات وموردين خارجية (طلب عروض أسعار RFQ → أمر شراء PO → مطابقة فاتورة مورد ثلاثية).' },
   { key: 'assets', ar: 'الأصول والصيانة', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية', missing: 'ينقص سجل الأجهزة الطبية والتقنية، الصيانة الوقائية الدورية، أوامر العمل التصحيحية، وتواريخ المعايرة.' },
   { key: 'quality', ar: 'الجودة والامتثال', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية', missing: 'ينقص سجل مؤشرات الجودة، التدقيقات الداخلية، تقارير الحوادث العرضية (OVR)، والإجراءات التصحيحية (CAPA).' },
   { key: 'finance', ar: 'الإدارة المالية', status: 'partial', route: '#/billing', note: 'تحصيل وفواتير؛ دفتر أستاذ ومراكز تكلفة غير مكتملة', missing: 'ينقص شجرة الحسابات، دفتر الأستاذ العام، مراكز التكلفة، سندات القبض/الصرف، والتسوية المالية.' },
@@ -49,7 +51,7 @@ const SearchQuery = z.object({
 });
 
 export interface SearchHit {
-  category: 'patient' | 'appointment' | 'encounter' | 'invoice' | 'cssd' | 'hr';
+  category: 'patient' | 'appointment' | 'encounter' | 'invoice' | 'cssd' | 'hr' | 'inventory' | 'dental' | 'physio';
   categoryAr: string;
   id: string;
   code: string;
@@ -72,7 +74,7 @@ export async function metaRoutes(app: FastifyInstance) {
         db.query(
           `SELECT DISTINCT u.id, u.full_name_ar, ur.department_id, ur.role_id
              FROM users u JOIN user_roles ur ON ur.user_id = u.id
-            WHERE ur.facility_id = $1 AND u.is_active = true AND ur.role_id IN ('physician','department_manager','surgeon','anesthesiologist')
+            WHERE ur.facility_id = $1 AND u.is_active = true AND ur.role_id IN ('physician','department_manager','surgeon','anesthesiologist','dentist')
             ORDER BY u.full_name_ar`,
           [auth.activeFacilityId],
         ),
@@ -256,6 +258,87 @@ export async function metaRoutes(app: FastifyInstance) {
                   title: emp.full_name_ar,
                   subtitle: `${emp.job_title_ar} · ${emp.status}`,
                   route: `#/hr/${emp.id}`,
+                });
+              }
+            }),
+        );
+      }
+
+      if (hasPermission(auth, 'inventory.read')) {
+        tasks.push(
+          db
+            .query<{ id: string; sku: string; name_ar: string; unit: string; category: string }>(
+              `SELECT id, sku, name_ar, unit, category
+                 FROM inventory_items
+                WHERE facility_id = $1
+                  AND (sku ILIKE $2 OR name_ar ILIKE $2 OR name_en ILIKE $2)
+                ORDER BY sku LIMIT 5`,
+              [auth.activeFacilityId, term],
+            )
+            .then((r) => {
+              for (const it of r.rows) {
+                hits.push({
+                  category: 'inventory',
+                  categoryAr: 'المخازن والإمداد',
+                  id: it.id,
+                  code: it.sku,
+                  title: it.name_ar,
+                  subtitle: `${it.unit} · ${it.category}`,
+                  route: '#/inventory',
+                });
+              }
+            }),
+        );
+      }
+
+      if (hasPermission(auth, 'dental.read')) {
+        tasks.push(
+          db
+            .query<{ id: string; procedure_no: string; full_name_ar: string; description: string; status: string }>(
+              `SELECT dp.id, dp.procedure_no, p.full_name_ar, dp.description, dp.status
+                 FROM dental_procedures dp JOIN patients p ON p.id = dp.patient_id
+                WHERE dp.facility_id = $1
+                  AND (dp.procedure_no ILIKE $2 OR p.full_name_ar ILIKE $2 OR dp.description ILIKE $2)
+                ORDER BY dp.created_at DESC LIMIT 5`,
+              [auth.activeFacilityId, term],
+            )
+            .then((r) => {
+              for (const dp of r.rows) {
+                hits.push({
+                  category: 'dental',
+                  categoryAr: 'عيادة الأسنان',
+                  id: dp.id,
+                  code: dp.procedure_no,
+                  title: dp.full_name_ar,
+                  subtitle: `${dp.description} · ${dp.status}`,
+                  route: '#/dental',
+                });
+              }
+            }),
+        );
+      }
+
+      if (hasPermission(auth, 'physio.read')) {
+        tasks.push(
+          db
+            .query<{ id: string; referral_no: string; full_name_ar: string; body_region: string; status: string }>(
+              `SELECT r.id, r.referral_no, p.full_name_ar, r.body_region, r.status
+                 FROM physio_referrals r JOIN patients p ON p.id = r.patient_id
+                WHERE r.facility_id = $1
+                  AND (r.referral_no ILIKE $2 OR p.full_name_ar ILIKE $2 OR r.body_region ILIKE $2)
+                ORDER BY r.created_at DESC LIMIT 5`,
+              [auth.activeFacilityId, term],
+            )
+            .then((r) => {
+              for (const pr of r.rows) {
+                hits.push({
+                  category: 'physio',
+                  categoryAr: 'العلاج الطبيعي',
+                  id: pr.id,
+                  code: pr.referral_no,
+                  title: pr.full_name_ar,
+                  subtitle: `${pr.body_region} · ${pr.status}`,
+                  route: '#/physiotherapy',
                 });
               }
             }),

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parse } from '../../lib/validation';
-import { requireAuth, requirePermission } from '../../auth/context';
+import { requireAuth, requirePermission, hasPermission } from '../../auth/context';
 import { withTenant } from '../../lib/tenant';
 import { writeAudit } from '../../lib/audit';
 
@@ -155,7 +155,13 @@ export async function reportRoutes(app: FastifyInstance) {
   app.get('/api/reports', async (req) => {
     const auth = requireAuth(req);
     requirePermission(auth, 'report.read');
-    return { reports: REPORTS.map((r) => ({ key: r.key, ar: r.ar, columns: r.columns.map((c) => c.ar) })) };
+    return {
+      reports: REPORTS.filter((r) => hasPermission(auth, r.permission)).map((r) => ({
+        key: r.key,
+        ar: r.ar,
+        columns: r.columns.map((c) => c.ar),
+      })),
+    };
   });
 
   app.get('/api/reports/:key', async (req, reply) => {

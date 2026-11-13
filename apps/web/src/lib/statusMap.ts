@@ -37,8 +37,16 @@ export const STATUS_MAP: Record<string, StatusDef> = {
   urgent: { ar: 'عاجل', en: 'Urgent', tone: 'warning', symbol: '!' },
   stat: { ar: 'فوري حرج', en: 'STAT', tone: 'danger', symbol: '‼' },
   routine: { ar: 'روتيني', en: 'Routine', tone: 'neutral', symbol: '○' },
+  high: { ar: 'مرتفع', en: 'High', tone: 'warning', symbol: '↑' },
+  low: { ar: 'منخفض', en: 'Low', tone: 'warning', symbol: '↓' },
   critical_high: { ar: 'حرج مرتفع', en: 'Critical High', tone: 'danger', symbol: '▲' },
   critical_low: { ar: 'حرج منخفض', en: 'Critical Low', tone: 'danger', symbol: '▼' },
+
+  // Dental, Physiotherapy & Medical Stores
+  planned: { ar: 'مخطط', en: 'Planned', tone: 'info', symbol: '●' },
+  referred: { ar: 'مُحال للتقييم', en: 'Referred', tone: 'warning', symbol: '◆' },
+  partially_issued: { ar: 'صرف جزئي', en: 'Partially Issued', tone: 'warning', symbol: '◐' },
+  low_stock: { ar: 'نقص مخزون', en: 'Low Stock', tone: 'danger', symbol: '!' },
 
   // Pharmacy & Billing
   issued: { ar: 'صادرة', en: 'Issued', tone: 'info', symbol: '●' },

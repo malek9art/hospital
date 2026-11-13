@@ -7,7 +7,7 @@ import { conflict, notFound } from '../../lib/errors';
 import { authorizeChartAccess, loadPatientOr404 } from '../patients/access';
 import { ensureCharge } from '../billing/service';
 
-const MODALITIES = ['xray', 'ct', 'mri', 'us', 'mammography', 'fluoroscopy'] as const;
+const MODALITIES = ['xray', 'ct', 'mri', 'us', 'mammography', 'fluoroscopy', 'panoramic'] as const;
 const MODALITY_AR: Record<string, string> = {
   xray: 'أشعة سينية',
   ct: 'أشعة مقطعية',
@@ -15,6 +15,7 @@ const MODALITY_AR: Record<string, string> = {
   us: 'سونار',
   mammography: 'ماموغرام',
   fluoroscopy: 'أشعة fluoroscopy',
+  panoramic: 'أشعة بانوراما أسنان',
 };
 
 // Fallback list prices; per-facility app_settings (pricing.imaging_<modality>) win.
@@ -25,6 +26,7 @@ const DEFAULT_PRICES: Record<string, number> = {
   us: 300,
   mammography: 400,
   fluoroscopy: 500,
+  panoramic: 180,
 };
 
 async function loadOrder(db: any, id: string) {
@@ -52,24 +54,18 @@ async function imagingPrice(db: any, facilityId: string, modality: string) {
 }
 
 export async function radiologyRoutes(app: FastifyInstance) {
-  // ------------------------------------------------------------- Ordering ----
-  app.post('/api/encounters/:id/imaging-orders', async (req, reply) => {
+  async function createImagingOrder(
+    req: any,
+    reply: any,
+    encounterId: string,
+    b: { modality: (typeof MODALITIES)[number]; bodyPart: string; indication: string; priority: 'routine' | 'urgent' | 'stat' },
+  ) {
     const auth = requireAuth(req);
     requirePermission(auth, 'radiology.order');
-    const { id } = parse(z.object({ id: zId }), req.params);
-    const b = parse(
-      z.object({
-        modality: z.enum(MODALITIES),
-        bodyPart: z.string().min(2).max(120),
-        indication: z.string().min(5).max(1000),
-        priority: z.enum(['routine', 'urgent', 'stat']).default('routine'),
-      }),
-      req.body,
-    );
     return withTenantAudited(
       auth,
       async (db) => {
-        const enc = await db.query<any>(`SELECT * FROM encounters WHERE id = $1`, [id]);
+        const enc = await db.query<any>(`SELECT * FROM encounters WHERE id = $1`, [encounterId]);
         const encounter = enc.rows[0];
         if (!encounter) throw notFound('الزيارة غير موجودة');
         if (encounter.status !== 'open') throw conflict('لا يمكن طلب أشعة على زيارة مغلقة');
@@ -83,10 +79,20 @@ export async function radiologyRoutes(app: FastifyInstance) {
           `INSERT INTO imaging_orders (id, facility_id, order_no, encounter_id, patient_id, modality, body_part,
              clinical_indication, priority, ordered_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [orderId, encounter.facility_id, orderNo, id, encounter.patient_id, b.modality, b.bodyPart, b.indication, b.priority, auth.user.id],
+          [
+            orderId,
+            encounter.facility_id,
+            orderNo,
+            encounterId,
+            encounter.patient_id,
+            b.modality,
+            b.bodyPart,
+            b.indication,
+            b.priority,
+            auth.user.id,
+          ],
         );
         if (b.priority === 'stat') {
-          // Surface immediately on the worklist; the alert is derived, not a separate row.
           req.log.info({ orderId, priority: b.priority }, 'stat imaging order created');
         }
         reply.code(201);
@@ -97,10 +103,52 @@ export async function radiologyRoutes(app: FastifyInstance) {
         entityType: 'imaging_order',
         entityId: r.id,
         patientId: null,
-        detail: { orderNo: r.orderNo, modality: r.modality, priority: r.priority, encounterId: id },
+        detail: { orderNo: r.orderNo, modality: r.modality, priority: r.priority, encounterId },
         ip: req.ip,
       }),
     );
+  }
+
+  // ------------------------------------------------------------- Ordering ----
+  app.post('/api/encounters/:id/imaging-orders', async (req, reply) => {
+    const { id } = parse(z.object({ id: zId }), req.params);
+    const b = parse(
+      z.object({
+        modality: z.enum(MODALITIES),
+        bodyPart: z.string().min(2).max(120),
+        indication: z.string().min(5).max(1000),
+        priority: z.enum(['routine', 'urgent', 'stat']).default('routine'),
+      }),
+      req.body,
+    );
+    return createImagingOrder(req, reply, id, {
+      modality: b.modality,
+      bodyPart: b.bodyPart,
+      indication: b.indication,
+      priority: b.priority ?? 'routine',
+    });
+  });
+
+  app.post('/api/radiology/orders', async (req, reply) => {
+    const raw = parse(
+      z.object({
+        encounterId: zId,
+        modality: z.enum(MODALITIES),
+        bodyPart: z.string().min(2).max(120),
+        indication: z.string().min(5).max(1000).optional(),
+        clinicalIndication: z.string().min(5).max(1000).optional(),
+        priority: z.enum(['routine', 'urgent', 'stat']).default('routine'),
+      }),
+      req.body,
+    );
+    const indication = (raw.indication ?? raw.clinicalIndication ?? '').trim();
+    const validated = parse(z.object({ indication: z.string().min(5).max(1000) }), { indication });
+    return createImagingOrder(req, reply, raw.encounterId, {
+      modality: raw.modality,
+      bodyPart: raw.bodyPart,
+      indication: validated.indication,
+      priority: raw.priority ?? 'routine',
+    });
   });
 
   // ------------------------------------------------------------- Worklist ----
@@ -229,7 +277,9 @@ export async function radiologyRoutes(app: FastifyInstance) {
       async (db) => {
         const order = await loadOrder(db, id);
         if (order.status === 'cancelled') throw conflict('الطلب ملغى');
-        if (!['performed', 'reported'].includes(order.status)) throw conflict('يجب إتمام التصوير قبل كتابة التقرير');
+        if (!['performed', 'reported', 'verified'].includes(order.status)) {
+          throw conflict('يجب إتمام التصوير قبل كتابة التقرير');
+        }
         const last = await db.query<{ version: number }>(
           `SELECT coalesce(max(version), 0) AS version FROM imaging_reports WHERE order_id = $1`,
           [id],
@@ -250,6 +300,9 @@ export async function radiologyRoutes(app: FastifyInstance) {
           [reportId, order.facility_id, id, version, b.findings, b.impression, b.recommendation ?? null, b.critical,
             auth.user.id, previous.rows[0]?.id ?? null],
         );
+        if (order.status === 'performed') {
+          await db.query(`UPDATE imaging_orders SET status = 'reported' WHERE id = $1`, [id]);
+        }
         reply.code(201);
         return { id: reportId, version, status: 'draft' };
       },

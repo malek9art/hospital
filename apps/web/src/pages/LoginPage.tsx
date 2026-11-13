@@ -4,10 +4,12 @@ import { Button, EphemeralBanner, Input } from '../components';
 
 const DEMO_ACCOUNTS: Array<{ group: string; items: Array<[string, string, string]> }> = [
   {
-    group: 'الكادر الطبي والتمريضي',
+    group: 'الكادر الطبي، الأسنان، التأهيل والتمريض',
     items: [
       ['طبيب باطنة', 'dr.ahmed@demo.hms', 'Doctor#Demo2026'],
       ['طبيبة طوارئ', 'dr.sara@demo.hms', 'Doctor#Demo2026'],
+      ['طبيب وجراح أسنان', 'dentist@demo.hms', 'Dental#Demo2026'],
+      ['أخصائي علاج طبيعي', 'physio@demo.hms', 'Physio#Demo2026'],
       ['جرّاح عام', 'surgeon@demo.hms', 'Surgeon#Demo2026'],
       ['طبيب تخدير', 'anesthesia@demo.hms', 'Anesthesia#Demo2026'],
       ['تمريض عمليات', 'ornurse@demo.hms', 'Nurse#Demo2026'],
@@ -18,14 +20,16 @@ const DEMO_ACCOUNTS: Array<{ group: string; items: Array<[string, string, string
     ],
   },
   {
-    group: 'التشخيص والمساندة السريرية',
+    group: 'التشخيص، المخازن، والمساندة السريرية',
     items: [
       ['مختبر (إدخال)', 'lab@demo.hms', 'Lab#Demo2026'],
       ['مختبر (اعتماد)', 'lab2@demo.hms', 'Lab#Demo2026'],
       ['فني أشعة', 'radiology@demo.hms', 'Radiology#Demo2026'],
       ['استشاري أشعة', 'radiologist@demo.hms', 'Radiology#Demo2026'],
-      ['صيدلي', 'pharmacist@demo.hms', 'Pharma#Demo2026'],
       ['بنك الدم', 'bloodbank@demo.hms', 'Blood#Demo2026'],
+      ['أمين مستودع (طلب/توريد)', 'stores@demo.hms', 'Store#Demo2026'],
+      ['أمين مستودع ثانٍ (صرف SoD)', 'stores2@demo.hms', 'Store#Demo2026'],
+      ['صيدلي', 'pharmacist@demo.hms', 'Pharma#Demo2026'],
       ['أخصائي تغذية', 'dietitian@demo.hms', 'Nutrition#Demo2026'],
       ['مطبخ التغذية', 'kitchen@demo.hms', 'Kitchen#Demo2026'],
       ['فني تعقيم (CSSD)', 'cssd@demo.hms', 'CSSD#Demo2026'],
@@ -194,7 +198,7 @@ export default function LoginPage({ onLogin, notice }: { onLogin: (m: Me) => voi
             <div className="rounded-xl bg-white/10 p-4 space-y-1.5">
               <p className="font-bold text-white">الضوابط المطبّقة فعليًا:</p>
               <p>• عزل بيانات المنشآت على مستوى الصفوف في PostgreSQL (<span className="font-mono">FORCE RLS</span>)</p>
-              <p>• فصل المهام (SoD) في المختبر، التمريض، بنك الدم، التعقيم، مكافحة العدوى، والتراخيص المهنية</p>
+              <p>• فصل المهام (SoD) في المختبرات، التمريض، بنك الدم، المخازن الطبية، التعقيم، مكافحة العدوى، والتراخيص المهنية</p>
               <p>• سجل تدقيق غير قابل للتعديل مرتبط بسلسلة تجزئة SHA-256</p>
             </div>
             <p className="text-xs text-brand-200/90">

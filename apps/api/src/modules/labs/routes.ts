@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parse, zId } from '../../lib/validation';
-import { requireAuth, requirePermission } from '../../auth/context';
+import { requireAuth, requirePermission, requireAnyPermission } from '../../auth/context';
 import { withTenant, withTenantAudited } from '../../lib/tenant';
 import { authorizeChartAccess, loadPatientOr404 } from '../patients/access';
 import { conflict, notFound } from '../../lib/errors';
@@ -34,7 +34,13 @@ async function labItemContext(db: any, itemId: string) {
 export async function labRoutes(app: FastifyInstance) {
   app.get('/api/lab/worklist', async (req) => {
     const auth = requireAuth(req);
-    requirePermission(auth, 'lab.sample.collect');
+    requireAnyPermission(auth, [
+      'lab.sample.collect',
+      'lab.result.enter',
+      'lab.result.verify',
+      'lab.result.amend',
+      'lab.critical.ack',
+    ]);
     const { status } = parse(z.object({ status: z.enum(['ordered', 'collected', 'resulted', 'verified', 'all']).default('all') }), req.query);
     return withTenant(auth, async (db) => {
       const params: unknown[] = [auth.activeFacilityId];
@@ -45,13 +51,17 @@ export async function labRoutes(app: FastifyInstance) {
       }
       const rows = await db.query(
         `SELECT li.id, li.status, li.test_code, li.specimen_barcode, li.collected_at, li.verified_at,
-                lo.order_no, lo.priority, lo.ordered_at, lo.patient_id, p.mrn, p.full_name_ar AS patient_name,
-                t.name_ar AS test_name, t.unit, lr.value_numeric, lr.value_text, lr.flag
+                lo.order_no, lo.priority, lo.ordered_at, lo.patient_id, lo.encounter_id,
+                p.mrn, p.full_name_ar AS patient_name,
+                t.name_ar AS test_name, t.specimen, t.unit, t.ref_low, t.ref_high,
+                lr.id AS result_id, lr.value_numeric, lr.value_text, lr.flag, lr.comment,
+                lr.resulted_by, u_res.full_name_ar AS resulted_by_name
            FROM lab_order_items li
            JOIN lab_orders lo ON lo.id = li.order_id
            JOIN lab_tests t ON t.code = li.test_code
            JOIN patients p ON p.id = lo.patient_id
            LEFT JOIN lab_results lr ON lr.order_item_id = li.id
+           LEFT JOIN users u_res ON u_res.id = lr.resulted_by
           WHERE li.facility_id = $1 AND li.status <> 'cancelled' ${filter}
           ORDER BY CASE lo.priority WHEN 'stat' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END, lo.ordered_at ASC
           LIMIT 200`,

@@ -399,6 +399,7 @@ export default function ClinicPage({ auth, routeId }: { auth: Me; routeId: strin
                         <option value="us">موجات فوق صوتية</option>
                         <option value="mammography">ماموغرام</option>
                         <option value="fluoroscopy">فلوروسكوبي</option>
+                        <option value="panoramic">بانوراما الأسنان (OPG)</option>
                       </Select>
                       <Input
                         label="المنطقة التشريحية"

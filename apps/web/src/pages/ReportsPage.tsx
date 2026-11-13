@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   EmptyState,
-  ErrorState,
   Input,
   PageHeader,
   PageSkeleton,
@@ -24,7 +23,13 @@ export default function ReportsPage({ auth }: { auth: Me }) {
 
   useEffect(() => {
     api<{ reports: any[] }>('/api/reports')
-      .then((r) => setReports(r.reports ?? []))
+      .then((r) => {
+        const list = r.reports ?? [];
+        setReports(list);
+        if (list.length > 0 && !list.some((it) => it.key === 'visits')) {
+          setKey(list[0].key);
+        }
+      })
       .catch((e: Error) => setErr(e.message));
   }, []);
 
@@ -46,7 +51,7 @@ export default function ReportsPage({ auth }: { auth: Me }) {
 
   useEffect(() => {
     load();
-  }, [key]);
+  }, [key, load]);
 
   async function downloadCsv() {
     try {
@@ -71,8 +76,7 @@ export default function ReportsPage({ auth }: { auth: Me }) {
     }
   }
 
-  if (err && !data) return <ErrorState message={err} onRetry={load} />;
-  if (loading && !data) return <PageSkeleton cards={2} rows={6} />;
+  if (loading && !data && reports.length === 0) return <PageSkeleton cards={2} rows={6} />;
 
   const activeFacility = auth.facilities.find((f) => f.id === auth.activeFacilityId);
 
@@ -81,7 +85,7 @@ export default function ReportsPage({ auth }: { auth: Me }) {
       <div className="no-print">
         <PageHeader
           title="التقارير التشغيلية والمالية والسريرية"
-          subtitle="تقارير مستخرجة مباشرة من قاعدة البيانات مع تدقيق عمليات التصدير."
+          subtitle="تقارير مستخرجة مباشرة من قاعدة البيانات حسب صلاحيات دورك مع تدقيق عمليات التصدير."
         />
       </div>
 
@@ -111,11 +115,11 @@ export default function ReportsPage({ auth }: { auth: Me }) {
           <Button variant="ghost" onClick={load}>
             تحديث البيانات
           </Button>
-          <Button variant="ghost" onClick={() => window.print()}>
+          <Button variant="ghost" onClick={() => window.print()} disabled={!data}>
             طباعة التقرير
           </Button>
           {has(auth, 'report.export') && (
-            <Button variant="primary" onClick={downloadCsv}>
+            <Button variant="primary" onClick={downloadCsv} disabled={!data}>
               تصدير CSV (مُدقَّق)
             </Button>
           )}
@@ -124,6 +128,15 @@ export default function ReportsPage({ auth }: { auth: Me }) {
           <p className="text-xs text-slate-500 mt-2">وضع العرض فقط — دورك الحالي لا يملك صلاحية تصدير CSV.</p>
         )}
       </Card>
+
+      {err && (
+        <div role="alert" className="rounded-xl bg-rose-50 border border-rose-200 p-3.5 text-sm text-rose-800 flex items-center justify-between gap-2">
+          <span>{err}</span>
+          <Button variant="ghost" size="sm" onClick={load}>
+            إعادة المحاولة
+          </Button>
+        </div>
+      )}
 
       {data && (
         <div className="print-sheet">
