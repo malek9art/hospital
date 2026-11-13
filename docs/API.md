@@ -227,6 +227,27 @@
 | POST | `/api/infection/cases/:id/review` | `infection.confirm` — `confirmed/excluded` مع ملاحظة ≥ ٥ أحرف، ومُبلّغ الحالة لا يعتمدها |
 | POST | `/api/infection/hand-hygiene` | `infection.audit` — فرص/ملتزم بها مع تحقق `compliant ≤ opportunities`؛ السجل ملحق فقط |
 
+## الموارد البشرية والتراخيص والمناوبات (`/api/hr/*`)
+
+| الطريقة | المسار | الوصف |
+|---|---|---|
+| GET | `/api/hr/board` | `hr.read` — إجماليات الكوادر، قائمة الموظفين (مع هوية/جوال مقنّعين)، التراخيص القريبة من الانتهاء (٦٠ يومًا)، جدول المناوبات، وطلبات الإجازات |
+| GET | `/api/hr/me` | `hr.self` أو `hr.read` — ملف الخدمة الذاتية للموظف المرتبط بحساب الدخول (تراخيصه، مناوباته، إجازاته) |
+| POST | `/api/hr/employees` | `hr.write` — إنشاء ملف موظف مع تشفير الهوية والجوال بـ `AES-256-GCM` وتوليد رقم وظيفي متسلسل `EMP-xxxxxx` |
+| GET | `/api/hr/employees/:id` | `hr.read` — تفاصيل الموظف وتراخيصه ومناوباته وإجازاته |
+| PATCH | `/api/hr/employees/:id/status` | `hr.write` — تحديث حالة الموظف (`active` / `on_leave` / `suspended` / `terminated`) مع سبب موثّق للإيقاف/الإنهاء |
+| POST | `/api/hr/employees/:id/credentials` | `hr.credential.write` — تسجيل ترخيص مهني (`scfhs`, `moh_license`, `bls`, `acls`, `pals`, `nrp`, `board`) بحالة `pending_verification` |
+| POST | `/api/hr/credentials/:id/verify` | `hr.credential.verify` — اعتماد الترخيص من مسؤول **مختلف** عن مُدخل السجل (`409` عند محاولة الاعتماد الذاتي) |
+| POST | `/api/hr/credentials/:id/revoke` | `hr.credential.verify` — إيقاف الترخيص بسبب موثّق (≥ ٥ أحرف)؛ يمنع جدولة مناوبات سريرية جديدة للممارس |
+| POST | `/api/hr/shifts` | `hr.roster.write` — جدولة مناوبة؛ **بوابة سلامة سريرية** ترفض جدولة طبيب/تمريض/صحي مساند بلا ترخيص `scfhs` أو `moh_license` معتمد وساري المفعول حتى تاريخ المناوبة، وترفض التداخل مع إجازة معتمدة أو نفس الفترة |
+| POST | `/api/hr/shifts/:id/checkin` | `hr.roster.write` أو الموظف نفسه عبر `hr.self` — تسجيل حضور المناوبة |
+| POST | `/api/hr/shifts/:id/complete` | `hr.roster.write` أو الموظف نفسه عبر `hr.self` — إتمام المناوبة بعد الحضور وتجميد السجل |
+| POST | `/api/hr/shifts/:id/cancel` | `hr.roster.write` — إلغاء مناوبة غير مكتملة بسبب موثّق |
+| POST | `/api/hr/leaves` | `hr.leave.request` أو `hr.self` (للموظف نفسه فقط) — تقديم طلب إجازة (`LV-xxxxxx`) مع فحص عدم التداخل |
+| POST | `/api/hr/leaves/:id/review` | `hr.leave.approve` — اعتماد أو رفض طلب الإجازة مع **فصل مهام** يمنع مقدم الطلب أو صاحب الإجازة من اعتمادها لنفسه |
+
+**حدود الموارد البشرية:** لا يشمل مسيّر رواتب (Payroll)، ولا احتساب استقطاعات التأمينات الاجتماعية (GOSI)، ولا تكاملًا آليًا مع أجهزة البصمة الخارجية.
+
 **حدود:** لا قاعدة تراكيب غذائية ولا مخزون مطبخ ولا قائمة طعام؛ حصة الطاقة لكل وجبة ثابتة، والأهداف تقديرية حسب الوزن. نقاط الفحص أداة فرز (مستوحاة من NRS-2002) وليست جهازًا طبيًا معتمدًا.
 
 ## الإدارة والتدقيق

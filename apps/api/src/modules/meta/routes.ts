@@ -31,7 +31,7 @@ export const MODULE_STATUS: readonly ModuleStatusEntry[] = [
   { key: 'bloodbank', ar: 'بنك الدم', status: 'implemented', route: '#/bloodbank', note: 'متبرعون مفحوصون، مخزون وحدات بتاريخ صلاحية، طلب طبي، فحص توافق ABO/Rh محسوب على الخادم، صرف، نقل بمدقق ثانٍ، وتتبع كامل مع تفاعلات وحجر الوحدة', missing: 'لا فحص أجسام مضادة غير متوقعة (Antibody Screen/Titre)، ولا ترميز ISBT 128، ولا ربط ببنك دم وطني.' },
   { key: 'nutrition', ar: 'التغذية الطبية', status: 'implemented', route: '#/nutrition', note: 'فحص تغذية تمريضي، تقييم وأهداف أخصائي التغذية، أمر تغذية مُتحقَّق من الحساسية، توليد صواني الوجبات وتتبع التحضير والتسليم والاستهلاك، وتغذية أنبوبية/وريدية بأوامر مُصدَرة', missing: 'لا قاعدة تراكيب غذائية تفصيلية ولا مخزون مطبخ؛ توزيع الطاقة ثابت ٢٥/٣٥/٣٠/١٠٪ وأهداف السعرات تقديرية.' },
   { key: 'cssd', ar: 'التعقيم ومكافحة العدوى', status: 'implemented', route: '#/cssd', note: 'دورة تعقيم كاملة (استلام ملوّث → غسل → تغليف → دورة تعقيم بمؤشرات → اعتماد من شخص آخر → إفراج بصلاحية → صرف وربط بالعملية → إعادة), سحب/حجر عند فشل المؤشر، وأوامر عزل وترصد عدوى مرتبطة بالرعاية ومراقبة نظافة الأيدي', missing: 'لا تكامل مع أجهزة الأوتوكلاف (المؤشرات يدوية)، ولا تتبع فردي للأداة داخل الطقم، وحالات العدوى وصفية بلا معدلات NHSN/CDC معدّلة.' },
-  { key: 'hr', ar: 'الموارد البشرية', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية', missing: 'ينقص سجل الموظفين، التعاقدات، الرخص المهنية وتنبيهات انتهائها، جداول الورديات، الإجازات، وتقييم الأداء.' },
+  { key: 'hr', ar: 'الموارد البشرية والتراخيص الطبية', status: 'implemented', route: '#/hr', note: 'سجل الموظفين بهوية مشفرة، تراخيص مزاولة المهنة (SCFHS/MOH/BLS/ACLS) باعتماد منفصل وتنبيهات انتهاء، جدولة المناوبات بشرط ترخيص ساري للممارسين الصحيين، وطلبات الإجازات بفصل مهام وبوابة ذاتية للموظف', missing: 'لا يوجد محرك رواتب ومسيرات أجور (Payroll/WPS) ولا ربط آلي مع التأمينات الاجتماعية (GOSI) أو أجهزة البصمة.' },
   { key: 'procurement', ar: 'المخازن والمشتريات', status: 'partial', route: '#/pharmacy', note: 'مخزون أدوية وحركات فقط', missing: 'ينقص كتالوج الأصناف الطبية/العامة غير الدوائية، المستودعات المتعددة، حد إعادة الطلب، ودورة الشراء (طلب شراء → أمر شراء → استلام → فاتورة مورد).' },
   { key: 'assets', ar: 'الأصول والصيانة', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية', missing: 'ينقص سجل الأجهزة الطبية والتقنية، الصيانة الوقائية الدورية، أوامر العمل التصحيحية، وتواريخ المعايرة.' },
   { key: 'quality', ar: 'الجودة والامتثال', status: 'not_implemented', note: 'خارج نطاق الدفعة الحالية', missing: 'ينقص سجل مؤشرات الجودة، التدقيقات الداخلية، تقارير الحوادث العرضية (OVR)، والإجراءات التصحيحية (CAPA).' },
@@ -229,6 +229,33 @@ export async function metaRoutes(app: FastifyInstance) {
                   title: pk.set_name,
                   subtitle: pk.status,
                   route: `#/cssd/${pk.id}`,
+                });
+              }
+            }),
+        );
+      }
+
+      if (hasPermission(auth, 'hr.read')) {
+        tasks.push(
+          db
+            .query<{ id: string; employee_no: string; full_name_ar: string; job_title_ar: string; status: string }>(
+              `SELECT id, employee_no, full_name_ar, job_title_ar, status
+                 FROM hr_employees
+                WHERE facility_id = $1
+                  AND (employee_no ILIKE $2 OR full_name_ar ILIKE $2 OR full_name_en ILIKE $2 OR job_title_ar ILIKE $2)
+                ORDER BY employee_no LIMIT 5`,
+              [auth.activeFacilityId, term],
+            )
+            .then((r) => {
+              for (const emp of r.rows) {
+                hits.push({
+                  category: 'hr',
+                  categoryAr: 'الموارد البشرية',
+                  id: emp.id,
+                  code: emp.employee_no,
+                  title: emp.full_name_ar,
+                  subtitle: `${emp.job_title_ar} · ${emp.status}`,
+                  route: `#/hr/${emp.id}`,
                 });
               }
             }),

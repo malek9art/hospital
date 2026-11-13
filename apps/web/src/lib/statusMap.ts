@@ -94,6 +94,11 @@ export const STATUS_MAP: Record<string, StatusDef> = {
   expired: { ar: 'منتهية الصلاحية', en: 'Expired', tone: 'danger', symbol: '!' },
   expiring_soon: { ar: 'قريبة الانتهاء', en: 'Expiring soon', tone: 'warning', symbol: '!' },
   valid: { ar: 'سارية', en: 'Valid', tone: 'success', symbol: '✓' },
+  pending_verification: { ar: 'بانتظار التحقق', en: 'Pending verification', tone: 'warning', symbol: '○' },
+  revoked: { ar: 'مسحوبة', en: 'Revoked', tone: 'danger', symbol: '✕' },
+  scheduled: { ar: 'مجدولة', en: 'Scheduled', tone: 'info', symbol: '●' },
+  absent: { ar: 'متغيب', en: 'Absent', tone: 'danger', symbol: '✕' },
+  inactive: { ar: 'غير نشط', en: 'Inactive', tone: 'neutral', symbol: '■' },
 };
 
 export const TONE_CLASSES: Record<StatusTone, string> = {

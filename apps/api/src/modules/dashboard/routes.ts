@@ -84,7 +84,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
              (SELECT count(*)::int FROM imaging_reports WHERE facility_id = $1 AND status = 'final' AND is_critical = true AND acknowledged_at IS NULL) AS critical_imaging,
              (SELECT count(*)::int FROM cssd_packs WHERE facility_id = $1 AND status IN ('quarantined','recalled')) AS quarantined_packs,
              (SELECT count(*)::int FROM infection_cases WHERE facility_id = $1 AND status = 'suspected') AS suspected_infections,
-             (SELECT count(*)::int FROM invoices WHERE facility_id = $1 AND status IN ('open','partially_paid')) AS open_invoices`,
+             (SELECT count(*)::int FROM invoices WHERE facility_id = $1 AND status IN ('open','partially_paid')) AS open_invoices,
+             (SELECT count(*)::int FROM hr_credentials WHERE facility_id = $1 AND status = 'verified' AND expiry_date BETWEEN current_date AND current_date + 30) AS expiring_credentials`,
           [auth.activeFacilityId],
         ),
       ]);
@@ -101,6 +102,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const expiringBatches = Number(row.expiring_batches ?? 0);
       const pendingRx = Number(row.pending_prescriptions ?? 0);
       const openInvoices = Number(ex.open_invoices ?? 0);
+      const expiringCredentials = Number(ex.expiring_credentials ?? 0);
 
       const actionableAlerts = [
         criticalLabCount > 0 && {
@@ -142,6 +144,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
           severity: 'warning',
           route: '#/pharmacy',
           perm: 'pharmacy.prescription.read',
+        },
+        expiringCredentials > 0 && {
+          key: 'expiring_credentials',
+          title: 'تراخيص مزاولة صحية تنتهي خلال ٣٠ يومًا',
+          count: expiringCredentials,
+          severity: 'warning',
+          route: '#/hr',
+          perm: 'hr.read',
         },
         pendingRx > 0 && {
           key: 'pending_rx',

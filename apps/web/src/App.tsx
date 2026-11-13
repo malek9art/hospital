@@ -185,7 +185,7 @@ function AppContent() {
       case 'portal':
         return <PortalPage />;
       case 'hr':
-        return <HrPage />;
+        return <HrPage auth={auth} routeId={route.id} />;
     }
   };
 

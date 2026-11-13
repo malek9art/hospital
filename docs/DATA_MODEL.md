@@ -1,7 +1,7 @@
 # نموذج البيانات وقاعدة البيانات
 
 - **المحرك:** PostgreSQL 18 (التطوير عبر PGlite بنفس المحرك، والإنتاج عبر `pg`).
-- **الترحيلات:** `db/migrations/*.sql` (001..016) تُطبَّق بترتيب اسمي، وتُسجَّل في `schema_migrations` مع checksum؛ تعديل ملف مطبَّق يوقف الترحيل (يمنع الانحراف).
+- **الترحيلات:** `db/migrations/*.sql` (001..018) تُطبَّق بترتيب اسمي، وتُسجَّل في `schema_migrations` مع checksum؛ تعديل ملف مطبَّق يوقف الترحيل (يمنع الانحراف).
 - **الأدوار:** `hms_owner` (ترحيلات فقط) / `hms_app` (عمل الموظفين، RLS مفروض) / `hms_portal` (المريض، RLS بمستوى المريض).
 - **الجلسة:** كل معاملة تُنفّذ `SET LOCAL ROLE` + `set_config('app.facility_ids'|'app.patient_id', …, true)` فلا تتسرب الصلاحيات بين الطلبات.
 
@@ -47,7 +47,7 @@ erDiagram
   USERS ||--o{ BREAK_GLASS_GRANTS : emergency
 ```
 
-## الجداول (79)
+## الجداول (89 جدولًا + `portal_clinicians` VIEW)
 
 | المجموعة | الجداول |
 |---|---|
@@ -67,6 +67,7 @@ erDiagram
 | التغذية الطبية | `nutrition_screenings`, `nutrition_assessments`, `nutrition_diet_orders`, `nutrition_trays`, `nutrition_tube_orders`, `nutrition_followups` |
 | التعقيم المركزي | `cssd_instrument_sets`, `cssd_sterilization_loads`, `cssd_packs` |
 | مكافحة العدوى | `infection_isolations`, `infection_cases`, `hand_hygiene_audits` |
+| الموارد البشرية والتراخيص | `hr_employees`, `hr_credentials`, `hr_shifts`, `hr_leave_requests` |
 | عرض للمريض | `portal_clinicians` (VIEW) |
 
 ## قيود سلامة مهمة
@@ -98,6 +99,9 @@ erDiagram
 | `cssd_load_guard` الدورة المكتملة/المعتمدة غير قابلة للتعديل إلا حقول السحب، ومنع إعادة تشغيل دورة منتهية، و`CHECK (approved_by <> operator_id)` مع تحقق إضافي في الـAPI | فصل مهام الاعتماد |
 | `infection_isolation_guard` أمر العزل لا يُحذف، ولا يُغلق إلا بسبب، والمغلق غير قابل للتعديل؛ فهرس فريد لعزل نشط واحد لكل مريض | سلامة قرار العزل |
 | `infection_case_guard` الحالة تُراجع مرة واحدة `suspected→confirmed/excluded` مع مراجع وملاحظة، ثم تُجمّد؛ `hand_hygiene_guard` يمنع أي تعديل/حذف للملاحظات | دقة الترصد ودليل التدقيق |
+| `hr_credential_guard` يمنع حذف التراخيص أو تعديل سجل الترخيص بعد الاعتماد/الإيقاف، ويفرض `verified_by <> recorded_by` (فصل مهام) | سلامة التراخيص المهنية (SCFHS/MOH) |
+| `hr_shifts_active_slot_uq` يمنع تكرار المناوبة في نفس اليوم والفترة، و`hr_shift_guard` يمنع الحذف ويجمد المناوبات المكتملة/الملغاة | سلامة جدول المناوبات |
+| `hr_leave_guard` يمنع الحذف ويجمد طلب الإجازة بعد المراجعة مع قيد `reviewed_by <> requested_by` وفحص إضافي في الـAPI لمنع اعتماد الموظف لإجازته | فصل المهام في الإجازات |
 | `nutrition_trays` انتقالات حالة صارمة (ordered→prepared→delivered→consumed/refused) والصينية المقفلة لا تُعدّل | سلامة دورة الوجبة ووقت الاستهلاك |
 | `hash_version` على `audit_log` | تطور خوارزمية السلسلة دون إبطال صامت |
 

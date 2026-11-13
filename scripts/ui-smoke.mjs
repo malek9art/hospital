@@ -51,11 +51,13 @@ const ACCOUNTS = [
   { batch: '2', label: 'تخدير', email: 'anesthesia@demo.hms', password: 'Anesthesia#Demo2026' },
   { batch: '2', label: 'تمريض عمليات', email: 'ornurse@demo.hms', password: 'Nurse#Demo2026' },
   { batch: '2', label: 'طبيب عناية مركزة', email: 'intensivist@demo.hms', password: 'ICU#Demo2026' },
-  // Batch 3 (6 accounts <= 10/min auth rate limit)
+  // Batch 3 (8 accounts <= 10/min auth rate limit)
   { batch: '3', label: 'تمريض عناية مركزة', email: 'icunurse@demo.hms', password: 'ICU#Demo2026' },
   { batch: '3', label: 'تمريض جناح', email: 'nurse@demo.hms', password: 'Nurse#Demo2026' },
   { batch: '3', label: 'فني أشعة', email: 'radiology@demo.hms', password: 'Radiology#Demo2026' },
   { batch: '3', label: 'استشاري أشعة', email: 'radiologist@demo.hms', password: 'Radiology#Demo2026' },
+  { batch: '3', label: 'موارد بشرية (إدخال)', email: 'hr@demo.hms', password: 'HR#Demo2026' },
+  { batch: '3', label: 'مشرف تراخيص وإجازات', email: 'hr2@demo.hms', password: 'HR#Demo2026' },
   { batch: '3', label: 'مدقق', email: 'auditor@demo.hms', password: 'Auditor#Demo2026' },
   { batch: '3', label: 'مريض (بوابة)', email: 'patient@demo.hms', password: 'Patient#Demo2026' },
 ];
@@ -170,9 +172,11 @@ const PAGES = [
   },
   {
     key: 'hr',
-    perms: ['hr.read'],
-    optionalModule: true,
-    checks: [{ path: '/api/hr/board', keys: ['totals', 'employees', 'leaves', 'expiringLicenses'] }],
+    perms: ['hr.read', 'hr.self'],
+    checks: [
+      { path: '/api/hr/board', perm: 'hr.read', keys: ['totals', 'employees', 'credentials', 'shifts', 'leaves', 'expiringLicenses'] },
+      { path: '/api/hr/me', perm: 'hr.self', keys: ['employee', 'credentials', 'shifts', 'leaves'] },
+    ],
   },
   {
     key: 'reports',

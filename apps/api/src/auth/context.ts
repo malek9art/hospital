@@ -161,6 +161,12 @@ export function requirePermission(auth: AuthContext, permission: string) {
   }
 }
 
+export function requireAnyPermission(auth: AuthContext, permissions: readonly string[]) {
+  if (!permissions.some((p) => auth.permissions.has(p))) {
+    throw new AppError(403, 'forbidden', `الصلاحية المطلوبة غير متوفرة: ${permissions.join(' | ')}`);
+  }
+}
+
 export function hasPermission(auth: AuthContext, permission: string) {
   return auth.permissions.has(permission);
 }

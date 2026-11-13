@@ -85,6 +85,8 @@ beforeAll(async () => {
   agents.pharmacist = await login('pharmacist@demo.hms', 'Pharma#Demo2026', 'pharmacist');
   agents.accountant = await login('accountant@demo.hms', 'Account#Demo2026', 'accountant');
   agents.auditor = await login('auditor@demo.hms', 'Auditor#Demo2026', 'auditor');
+  agents.hr1 = await login('hr@demo.hms', 'HR#Demo2026', 'hr1');
+  agents.hr2 = await login('hr2@demo.hms', 'HR#Demo2026', 'hr2');
   agents.admin = await login('admin@demo.hms', 'Admin#Demo2026', 'admin');
   agents.patient = await login('patient@demo.hms', 'Patient#Demo2026', 'patient');
 
@@ -3085,6 +3087,228 @@ describe('Platform UX, RBAC & Global Search Enhancements', () => {
 
     const mods = await expectStatus(await call(agents.admin, 'GET', '/api/meta/modules'), 200, 'meta modules');
     expect(mods.modules.every((m: any) => 'missing' in m)).toBe(true);
+  });
+});
+
+describe('human resources, medical licensing (SCFHS), roster and leave governance', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const addDays = (n: number) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+
+  it('exposes the HR board to HR/auditor while enforcing least privilege on clinical & HR boundaries', async () => {
+    const board = await expectStatus(await call(agents.hr1, 'GET', '/api/hr/board'), 200, 'hr board');
+    expect(Number(board.totals.active_employees)).toBeGreaterThanOrEqual(6);
+    expect(Number(board.totals.expiring_30d)).toBeGreaterThanOrEqual(1);
+    expect(board.expiringLicenses.length).toBeGreaterThanOrEqual(1);
+    expect(board.employees[0].nationalIdMasked).toMatch(/^\*+\d{4}$/);
+
+    // HR manager has zero access to patient clinical records (least privilege)
+    expect((await call(agents.hr1, 'GET', '/api/patients')).statusCode).toBe(403);
+    // Receptionist and portal patient cannot view HR board
+    expect((await call(agents.reception, 'GET', '/api/hr/board')).statusCode).toBe(403);
+    expect((await call(agents.patient, 'GET', '/api/hr/board')).statusCode).toBe(403);
+    // Internal auditor can read HR board but cannot create employees
+    expect((await call(agents.auditor, 'GET', '/api/hr/board')).statusCode).toBe(200);
+    expect((await call(agents.auditor, 'POST', '/api/hr/employees', {
+      fullNameAr: 'موظف تجريبي', category: 'administrative', jobTitleAr: 'كاتب', hireDate: today,
+    })).statusCode).toBe(403);
+  });
+
+  it('enforces clinical SCFHS license gate on shift scheduling and separation of duties on license verification', async () => {
+    const emp = await expectStatus(
+      await call(agents.hr1, 'POST', '/api/hr/employees', {
+        fullNameAr: 'د. طارق السبيعي',
+        fullNameEn: 'Dr. Tariq Alsubaie',
+        category: 'physician',
+        jobTitleAr: 'أخصائي باطنية',
+        employmentType: 'locum',
+        hireDate: today,
+        nationalId: '1099887766',
+        phone: '0551122334',
+      }),
+      201,
+      'create physician employee',
+    );
+    state.newHrEmployeeId = emp.id;
+
+    // Cannot schedule a clinical practitioner before they hold a verified SCFHS/MOH license
+    const blockedNoLic = await call(agents.hr1, 'POST', '/api/hr/shifts', {
+      employeeId: emp.id,
+      shiftDate: addDays(2),
+      shiftType: 'morning',
+    });
+    expect(blockedNoLic.statusCode).toBe(409);
+
+    // Record SCFHS license as hr1
+    const cred = await expectStatus(
+      await call(agents.hr1, 'POST', `/api/hr/employees/${emp.id}/credentials`, {
+        credentialType: 'scfhs',
+        licenseNo: 'SCFHS-26-5501',
+        issuingBody: 'الهيئة السعودية للتخصصات الصحية',
+        issuedDate: addDays(-30),
+        expiryDate: addDays(365),
+      }),
+      201,
+      'record scfhs',
+    );
+    state.newHrCredentialId = cred.id;
+
+    // Still unverified -> shift scheduling still blocked!
+    expect((await call(agents.hr1, 'POST', '/api/hr/shifts', {
+      employeeId: emp.id, shiftDate: addDays(2), shiftType: 'morning',
+    })).statusCode).toBe(409);
+
+    // Separation of duties: hr1 recorded it, so hr1 CANNOT verify it
+    expect((await call(agents.hr1, 'POST', `/api/hr/credentials/${cred.id}/verify`, {})).statusCode).toBe(409);
+
+    // Second HR officer (hr2) verifies the license
+    const verified = await expectStatus(
+      await call(agents.hr2, 'POST', `/api/hr/credentials/${cred.id}/verify`, {}),
+      200,
+      'verify scfhs by hr2',
+    );
+    expect(verified.status).toBe('verified');
+
+    // Now shift scheduling succeeds, and duplicate slot is rejected
+    const shift = await expectStatus(
+      await call(agents.hr1, 'POST', '/api/hr/shifts', {
+        employeeId: emp.id, shiftDate: addDays(2), shiftType: 'morning',
+      }),
+      201,
+      'schedule shift with valid license',
+    );
+    expect((await call(agents.hr1, 'POST', '/api/hr/shifts', {
+      employeeId: emp.id, shiftDate: addDays(2), shiftType: 'morning',
+    })).statusCode).toBe(409);
+
+    // Check-in -> Complete lifecycle + immutability after completion
+    await expectStatus(await call(agents.hr1, 'POST', `/api/hr/shifts/${shift.id}/checkin`, {}), 200, 'shift checkin');
+    await expectStatus(await call(agents.hr1, 'POST', `/api/hr/shifts/${shift.id}/complete`, {}), 200, 'shift complete');
+    expect((await call(agents.hr1, 'POST', `/api/hr/shifts/${shift.id}/cancel`, { reason: 'محاولة إلغاء بعد الإتمام' })).statusCode).toBe(409);
+  });
+
+  it('blocks shift scheduling once a practitioner license is revoked and enforces DB delete guards', async () => {
+    await expectStatus(
+      await call(agents.hr2, 'POST', `/api/hr/credentials/${state.newHrCredentialId}/revoke`, {
+        reason: 'إيقاف احترازي لحين تجديد شهادة الاختصاص',
+      }),
+      200,
+      'revoke credential',
+    );
+
+    // With license revoked, future shift scheduling is blocked again
+    expect((await call(agents.hr1, 'POST', '/api/hr/shifts', {
+      employeeId: state.newHrEmployeeId,
+      shiftDate: addDays(4),
+      shiftType: 'evening',
+    })).statusCode).toBe(409);
+
+    // Suspension requires documented reason
+    expect((await call(agents.hr1, 'PATCH', `/api/hr/employees/${state.newHrEmployeeId}/status`, {
+      status: 'suspended',
+    })).statusCode).toBe(409);
+    await expectStatus(
+      await call(agents.hr1, 'PATCH', `/api/hr/employees/${state.newHrEmployeeId}/status`, {
+        status: 'suspended',
+        reason: 'موقوف لحين استكمال تجديد التصنيف المهني',
+      }),
+      200,
+      'suspend employee',
+    );
+
+    // DB triggers prevent deletion of HR records
+    await expect(
+      db.asRole('hms_app', { 'app.facility_ids': agents.hr1.me.activeFacilityId }, (q: any) =>
+        q.query(`DELETE FROM hr_employees WHERE id = $1`, [state.newHrEmployeeId]),
+      ),
+    ).rejects.toThrow(/cannot be deleted|permission denied/);
+  });
+
+  it('enforces self-service boundaries, leave overlap checks, and separation of duties on leave review', async () => {
+    // Physician views own self-service HR profile
+    const meHr = await expectStatus(await call(agents.doctor, 'GET', '/api/hr/me'), 200, 'doctor hr me');
+    expect(meHr.employee.employeeNo).toBe('EMP-000001');
+    expect(meHr.credentials.length).toBeGreaterThanOrEqual(1);
+
+    // Physician cannot request leave for another employee
+    expect((await call(agents.doctor, 'POST', '/api/hr/leaves', {
+      employeeId: state.newHrEmployeeId,
+      leaveType: 'annual',
+      startDate: addDays(25),
+      endDate: addDays(26),
+      reason: 'محاولة تقديم إجازة لموظف آخر',
+    })).statusCode).toBe(403);
+
+    // HR1 submits own leave request (EMP-000006) -> HR1 cannot approve their own leave (SoD)
+    const hrSelf = await expectStatus(await call(agents.hr1, 'GET', '/api/hr/me'), 200, 'hr1 me');
+    const selfLeave = await expectStatus(
+      await call(agents.hr1, 'POST', '/api/hr/leaves', {
+        employeeId: hrSelf.employee.id,
+        leaveType: 'annual',
+        startDate: addDays(30),
+        endDate: addDays(32),
+        reason: 'إجازة اعتيادية مجدولة مسبقًا',
+      }),
+      201,
+      'hr1 leave request',
+    );
+    expect(selfLeave.daysCount).toBe(3);
+
+    // Overlapping leave is rejected
+    expect((await call(agents.hr1, 'POST', '/api/hr/leaves', {
+      employeeId: hrSelf.employee.id,
+      leaveType: 'emergency',
+      startDate: addDays(31),
+      endDate: addDays(33),
+      reason: 'طلب متداخل في نفس الفترة',
+    })).statusCode).toBe(409);
+
+    // Self-approval blocked by SoD
+    expect((await call(agents.hr1, 'POST', `/api/hr/leaves/${selfLeave.id}/review`, {
+      decision: 'approved',
+    })).statusCode).toBe(409);
+
+    // Rejection without reason blocked
+    expect((await call(agents.hr2, 'POST', `/api/hr/leaves/${selfLeave.id}/review`, {
+      decision: 'rejected',
+    })).statusCode).toBe(409);
+
+    // HR2 approves HR1's leave -> scheduling shift during approved leave is blocked
+    await expectStatus(
+      await call(agents.hr2, 'POST', `/api/hr/leaves/${selfLeave.id}/review`, {
+        decision: 'approved',
+        note: 'معتمد مع تكليف البديل الإداري',
+      }),
+      200,
+      'hr2 approve leave',
+    );
+    expect((await call(agents.hr2, 'POST', '/api/hr/shifts', {
+      employeeId: hrSelf.employee.id,
+      shiftDate: addDays(31),
+      shiftType: 'morning',
+    })).statusCode).toBe(409);
+  });
+
+  it('isolates HR records across tenants via RLS and surfaces HR in /api/search & /api/meta/modules', async () => {
+    const leaked = await db.asRole('hms_app', { 'app.facility_ids': branchFacilityId }, (q: any) =>
+      q.query(`SELECT count(*)::int AS c FROM hr_employees`),
+    );
+    expect(leaked.rows[0].c).toBe(0);
+
+    const hrSearch = await expectStatus(await call(agents.hr1, 'GET', '/api/search?q=EMP-000001'), 200, 'hr search');
+    expect(hrSearch.items.some((i: any) => i.category === 'hr' && i.code === 'EMP-000001')).toBe(true);
+
+    const docSearch = await expectStatus(await call(agents.doctor, 'GET', '/api/search?q=EMP-000001'), 200, 'doc search emp');
+    expect(docSearch.items.some((i: any) => i.category === 'hr')).toBe(false);
+
+    const mods = await expectStatus(await call(agents.hr1, 'GET', '/api/meta/modules'), 200, 'hr module status');
+    const hrMod = mods.modules.find((m: any) => m.key === 'hr');
+    expect(hrMod.status).toBe('implemented');
+    expect(hrMod.route).toBe('#/hr');
+    expect(hrMod.missing).toContain('Payroll');
   });
 });
 

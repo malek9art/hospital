@@ -86,6 +86,12 @@ const PERMISSIONS: [string, string, string][] = [
   ['infection.surveillance', 'infection', 'تسجيل حالات الاشتباه بالعدوى المرتبطة بالرعاية'],
   ['infection.confirm', 'infection', 'مراجعة واعتماد أو استبعاد حالات العدوى (شخص مختلف عن المسجل)'],
   ['infection.audit', 'infection', 'تدقيق نظافة الأيدي'],
+  ['hr.read', 'hr', 'عرض سجل الموارد البشرية والتراخيص والمناوبات'],
+  ['hr.manage', 'hr', 'إضافة وتحديث ملفات الموظفين وتغيير حالتهم'],
+  ['hr.credentials.verify', 'hr', 'توثيق واعتماد وسحب التراخيص المهنية (فصل مهام)'],
+  ['hr.roster.manage', 'hr', 'جدولة المناوبات ومتابعة الحضور'],
+  ['hr.leave.approve', 'hr', 'مراجعة واعتماد أو رفض طلبات الإجازات (فصل مهام)'],
+  ['hr.self', 'hr', 'بوابة الموظف الذاتية للمناوبات والإجازات والتراخيص'],
   ['admin.users.read', 'admin', 'عرض المستخدمين'],
   ['admin.users.manage', 'admin', 'إدارة المستخدمين'],
   ['admin.roles.manage', 'admin', 'إدارة الأدوار'],
@@ -102,34 +108,36 @@ const PERMISSIONS: [string, string, string][] = [
 const ALL = PERMISSIONS.map((p) => p[0]);
 const ROLE_PERMS: Record<string, string[]> = {
   system_admin: ['admin.users.read', 'admin.users.manage', 'admin.roles.manage', 'admin.facility.manage', 'admin.sessions.manage', 'admin.settings.manage', 'audit.read', 'report.read'],
-  hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read'],
-  surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read', 'cssd.read', 'cssd.issue'],
-  anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read', 'cssd.read'],
-  or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read', 'cssd.read', 'cssd.issue'],
-  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake'],
-  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake', 'infection.read', 'cssd.read'],
-  dietitian: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'nutrition.read', 'nutrition.assess', 'nutrition.order', 'nutrition.tube', 'report.read'],
-  kitchen_staff: ['patient.read', 'patient.chart.administrative', 'nutrition.kitchen'],
-  cssd_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'cssd.read', 'cssd.manage', 'cssd.reprocess', 'cssd.sterilize', 'cssd.release', 'cssd.issue', 'report.read'],
-  infection_control: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.confirm', 'infection.audit', 'cssd.read', 'report.read', 'report.export'],
-  blood_bank_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'bloodbank.read', 'bloodbank.crossmatch', 'bloodbank.issue', 'bloodbank.stock', 'bloodbank.reaction', 'report.read'],
-  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction'],
-  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request'],
-  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.screen', 'nutrition.intake', 'cssd.read', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.audit'],
-  receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record'],
-  records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export'],
-  lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read'],
-  radiology_tech: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.perform'],
-  radiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.report', 'radiology.verify'],
-  pharmacist: ['patient.read', 'patient.chart.clinical', 'pharmacy.prescription.read', 'pharmacy.dispense', 'pharmacy.stock.manage', 'billing.invoice.read'],
-  accountant: ['patient.read', 'patient.chart.administrative', 'billing.invoice.read', 'billing.invoice.create', 'billing.payment.record', 'billing.invoice.void', 'billing.discount.apply', 'insurance.claim.manage', 'report.read', 'report.export', 'report.finance'],
-  auditor: ['audit.read', 'report.read', 'report.export', 'report.finance', 'admin.users.read', 'nursing.read'],
+  hospital_director: ['report.read', 'report.export', 'report.finance', 'billing.invoice.read', 'audit.read', 'admin.sessions.manage', 'admin.users.read', 'patient.read', 'appointment.read', 'hr.read', 'hr.credentials.verify', 'hr.leave.approve'],
+  hr_manager: ['hr.read', 'hr.manage', 'hr.credentials.verify', 'hr.roster.manage', 'hr.leave.approve', 'hr.self', 'report.read'],
+  surgeon: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'surgery.read', 'surgery.schedule', 'surgery.perform', 'radiology.order', 'radiology.read', 'billing.invoice.read', 'nursing.read', 'cssd.read', 'cssd.issue', 'hr.self'],
+  anesthesiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'clinical.order.create', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'anesthesia.perform', 'radiology.read', 'cssd.read', 'hr.self'],
+  or_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'surgery.read', 'surgery.checklist', 'nursing.read', 'cssd.read', 'cssd.issue', 'hr.self'],
+  intensivist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.order.create', 'clinical.prescription.create', 'clinical.vitals.write', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'icu.read', 'icu.chart', 'icu.ventilator', 'icu.manage', 'icu.discharge', 'radiology.order', 'radiology.read', 'nursing.read', 'surgery.read', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake', 'hr.self'],
+  icu_nurse: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'pharmacy.prescription.read', 'icu.read', 'icu.chart', 'icu.ventilator', 'nursing.read', 'nursing.mar.administer', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.intake', 'infection.read', 'cssd.read', 'hr.self'],
+  dietitian: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'nutrition.read', 'nutrition.assess', 'nutrition.order', 'nutrition.tube', 'report.read', 'hr.self'],
+  kitchen_staff: ['patient.read', 'patient.chart.administrative', 'nutrition.kitchen', 'hr.self'],
+  cssd_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'cssd.read', 'cssd.manage', 'cssd.reprocess', 'cssd.sterilize', 'cssd.release', 'cssd.issue', 'report.read', 'hr.self'],
+  infection_control: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'clinical.note.write', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.confirm', 'infection.audit', 'cssd.read', 'report.read', 'report.export', 'hr.self'],
+  blood_bank_tech: ['patient.read', 'patient.chart.administrative', 'clinical.encounter.read', 'bloodbank.read', 'bloodbank.crossmatch', 'bloodbank.issue', 'bloodbank.stock', 'bloodbank.reaction', 'report.read', 'hr.self'],
+  department_manager: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.create', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.diagnose', 'clinical.note.write', 'clinical.prescription.create', 'clinical.order.create', 'clinical.vitals.write', 'lab.result.verify', 'radiology.read', 'radiology.order', 'radiology.critical.ack', 'billing.invoice.read', 'report.read', 'report.export', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'nursing.read', 'nursing.careplan.manage', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'bloodbank.reaction', 'hr.read', 'hr.roster.manage', 'hr.leave.approve', 'hr.self'],
+  physician: ['patient.read', 'patient.create', 'patient.update', 'patient.chart.clinical', 'patient.break_glass', 'appointment.read', 'appointment.update', 'clinical.encounter.read', 'clinical.encounter.create', 'clinical.note.write', 'clinical.diagnose', 'clinical.vitals.write', 'clinical.order.create', 'clinical.prescription.create', 'pharmacy.prescription.read', 'billing.invoice.read', 'report.read', 'inpatient.admit', 'inpatient.discharge', 'inpatient.bed.manage', 'emergency.triage', 'radiology.order', 'radiology.read', 'radiology.critical.ack', 'nursing.read', 'surgery.read', 'surgery.schedule', 'bloodbank.read', 'bloodbank.request', 'hr.self'],
+  nurse: ['patient.read', 'patient.chart.clinical', 'appointment.read', 'appointment.checkin', 'clinical.encounter.read', 'clinical.vitals.write', 'clinical.note.write', 'lab.sample.collect', 'pharmacy.prescription.read', 'report.read', 'inpatient.bed.manage', 'emergency.triage', 'radiology.read', 'nursing.read', 'nursing.mar.administer', 'nursing.careplan.manage', 'nursing.handover.write', 'nursing.witness', 'bloodbank.read', 'bloodbank.transfuse', 'bloodbank.reaction', 'nutrition.read', 'nutrition.screen', 'nutrition.intake', 'cssd.read', 'infection.read', 'infection.isolate', 'infection.surveillance', 'infection.audit', 'hr.self'],
+  receptionist: ['patient.read', 'patient.create', 'patient.chart.administrative', 'appointment.read', 'appointment.create', 'appointment.update', 'appointment.checkin', 'billing.invoice.read', 'billing.payment.record', 'hr.self'],
+  records_officer: ['patient.read', 'patient.create', 'patient.update', 'patient.merge', 'patient.chart.administrative', 'appointment.read', 'report.read', 'report.export', 'hr.self'],
+  lab_tech: ['patient.read', 'patient.chart.clinical', 'lab.sample.collect', 'lab.result.enter', 'lab.result.verify', 'lab.critical.ack', 'clinical.encounter.read', 'hr.self'],
+  radiology_tech: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.perform', 'hr.self'],
+  radiologist: ['patient.read', 'patient.chart.clinical', 'clinical.encounter.read', 'radiology.read', 'radiology.report', 'radiology.verify', 'hr.self'],
+  pharmacist: ['patient.read', 'patient.chart.clinical', 'pharmacy.prescription.read', 'pharmacy.dispense', 'pharmacy.stock.manage', 'billing.invoice.read', 'hr.self'],
+  accountant: ['patient.read', 'patient.chart.administrative', 'billing.invoice.read', 'billing.invoice.create', 'billing.payment.record', 'billing.invoice.void', 'billing.discount.apply', 'insurance.claim.manage', 'report.read', 'report.export', 'report.finance', 'hr.self'],
+  auditor: ['audit.read', 'report.read', 'report.export', 'report.finance', 'admin.users.read', 'nursing.read', 'hr.read'],
   patient: ['portal.self'],
 };
 
 const ROLES: [string, string, string][] = [
   ['system_admin', 'مدير النظام', 'System administrator'],
   ['hospital_director', 'الإدارة التنفيذية', 'Executive management'],
+  ['hr_manager', 'مدير الموارد البشرية', 'Human resources manager'],
   ['department_manager', 'مدير قسم', 'Department manager'],
   ['physician', 'طبيب', 'Physician'],
   ['nurse', 'تمريض', 'Nurse'],
@@ -231,12 +239,15 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     pharma: await hashPassword('Pharma#Demo2026'),
     account: await hashPassword('Account#Demo2026'),
     auditor: await hashPassword('Auditor#Demo2026'),
+    hr: await hashPassword('HR#Demo2026'),
     patient: await hashPassword('Patient#Demo2026'),
   };
 
   const users: [string, string, string, string, string, string, string | null][] = [
     ['admin@demo.hms', 'مدير النظام', 'System Admin', 'مدير النظام', 'system_admin', password.admin, 'ADM'],
     ['director@demo.hms', 'د. خالد العتيبي', 'Dr. Khalid Alotaibi', 'المدير التنفيذي', 'hospital_director', password.director, 'ADM'],
+    ['hr@demo.hms', 'ماجد المالكي', 'Majed Almalki', 'أخصائي الموارد البشرية', 'hr_manager', password.hr, 'ADM'],
+    ['hr2@demo.hms', 'مها الشمراني', 'Maha Alshamrani', 'مشرفة شؤون الممارسين والتراخيص', 'hr_manager', password.hr, 'ADM'],
     ['dr.ahmed@demo.hms', 'د. أحمد الحربي', 'Dr. Ahmed Alharbi', 'استشاري طب باطني', 'physician', password.doctor, 'GEN'],
     ['dr.sara@demo.hms', 'د. سارة القحطاني', 'Dr. Sara Alqahtani', 'استشارية طوارئ', 'physician', password.doctor, 'ER'],
     ['nurse@demo.hms', 'مريم الزهراني', 'Mariam Alzahrani', 'ممرضة أولى', 'nurse', password.nurse, 'INP'],
@@ -1064,6 +1075,94 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     }
   }
 
+  // ------------------------------------------------ Human Resources (HR) ----
+  {
+    const hr1 = userIds['hr_manager:hr@demo.hms'];
+    const hr2 = userIds['hr_manager:hr2@demo.hms'];
+    const drAhmed = userIds['physician:dr.ahmed@demo.hms'];
+    const surgeonUser = userIds['surgeon:surgeon@demo.hms'];
+    const nurseUser = userIds['nurse:nurse@demo.hms'];
+    const pharmaUser = userIds['pharmacist:pharmacist@demo.hms'];
+    const receptionUser = userIds['receptionist:reception@demo.hms'];
+
+    if (hr1 && hr2) {
+      const empDefs: [string, string, string, string, string, string, string, string, string, string, string][] = [
+        ['EMP-000001', drAhmed, 'د. أحمد الحربي', 'Dr. Ahmed Alharbi', 'physician', 'استشاري طب باطني', deptIds.GEN, 'full_time', '2022-03-01', '1044556601', '0504455601'],
+        ['EMP-000002', surgeonUser, 'د. عبدالله الغامدي', 'Dr. Abdullah Alghamdi', 'physician', 'استشاري جراحة عامة', deptIds.OR, 'full_time', '2021-09-15', '1044556602', '0504455602'],
+        ['EMP-000003', nurseUser, 'مريم الزهراني', 'Mariam Alzahrani', 'nursing', 'ممرضة أولى', deptIds.INP, 'full_time', '2023-01-10', '1044556603', '0504455603'],
+        ['EMP-000004', pharmaUser, 'ريم المالكي', 'Reem Almalki', 'allied_health', 'صيدلانية سريرية', deptIds.PHR, 'full_time', '2023-06-01', '1044556604', '0504455604'],
+        ['EMP-000005', receptionUser, 'عبدالله الشهري', 'Abdullah Alshehri', 'administrative', 'مسؤول استقبال مرضى', deptIds.ADM, 'full_time', '2024-02-01', '1044556605', '0504455605'],
+        ['EMP-000006', hr1, 'ماجد المالكي', 'Majed Almalki', 'administrative', 'أخصائي موارد بشرية', deptIds.ADM, 'full_time', '2023-11-12', '1044556606', '0504455606'],
+      ];
+
+      const empIds: Record<string, string> = {};
+      for (const [empNo, uid, nameAr, nameEn, cat, title, deptId, empType, hireDate, nid, phone] of empDefs) {
+        const eid = crypto.randomUUID();
+        empIds[empNo] = eid;
+        const nidEnc = encryptField(nid, `hr_employees.national_id_enc:${eid}`);
+        const phoneEnc = encryptField(phone, `hr_employees.phone_enc:${eid}`);
+        await db.query(
+          `INSERT INTO hr_employees (
+             id, facility_id, user_id, employee_no, full_name_ar, full_name_en,
+             category, job_title_ar, department_id, employment_type, hire_date,
+             national_id_enc, phone_enc, created_by
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [eid, facilityId, uid, empNo, nameAr, nameEn, cat, title, deptId, empType, hireDate, nidEnc, phoneEnc, hr1],
+        );
+      }
+
+      // Verified SCFHS licenses + 1 expiring within 20 days + 1 pending_verification (SoD demo)
+      await db.query(
+        `INSERT INTO hr_credentials (
+           id, facility_id, employee_id, credential_type, license_no, issuing_body,
+           issued_date, expiry_date, status, recorded_by, verified_by, verified_at, notes
+         ) VALUES
+           ($1,$2,$3,'scfhs','SCFHS-22-8841','الهيئة السعودية للتخصصات الصحية', current_date - 400, current_date + 330, 'verified', $8, $9, now() - interval '390 days', 'تصنيف استشاري باطنية ساري'),
+           ($4,$2,$5,'scfhs','SCFHS-21-7712','الهيئة السعودية للتخصصات الصحية', current_date - 700, current_date + 20,  'verified', $8, $9, now() - interval '695 days', 'ينتهي خلال ٢٠ يومًا — يستلزم تجديد'),
+           ($6,$2,$7,'scfhs','SCFHS-23-9104','الهيئة السعودية للتخصصات الصحية', current_date - 300, current_date + 420, 'verified', $8, $9, now() - interval '295 days', 'تصنيف أخصائي تمريض ساري'),
+           ($10,$2,$11,'scfhs','SCFHS-23-6520','الهيئة السعودية للتخصصات الصحية', current_date - 200, current_date + 500, 'verified', $8, $9, now() - interval '195 days', 'تصنيف صيدلي إكلينيكي'),
+           ($12,$2,$3,'acls','ACLS-26-1099','جمعية القلب السعودية', current_date - 10, current_date + 720, 'pending_verification', $8, NULL, NULL, 'بانتظار مطابقة شهادة ACLS المحدثة من مشرف التراخيص')`,
+        [
+          crypto.randomUUID(), facilityId, empIds['EMP-000001'],
+          crypto.randomUUID(), empIds['EMP-000002'],
+          crypto.randomUUID(), empIds['EMP-000003'],
+          hr1, hr2,
+          crypto.randomUUID(), empIds['EMP-000004'],
+          crypto.randomUUID(),
+        ],
+      );
+
+      // Today's & tomorrow's shifts
+      await db.query(
+        `INSERT INTO hr_shifts (id, facility_id, employee_id, department_id, shift_date, shift_type, status, checked_in_at, created_by, notes)
+         VALUES
+           ($1,$2,$3,$4, current_date, 'morning', 'checked_in', now() - interval '2 hours', $11, 'عيادة الباطنية الصباحية'),
+           ($5,$2,$6,$7, current_date, 'morning', 'scheduled', NULL, $11, 'جدول العمليات الصباحي'),
+           ($8,$2,$9,$10, current_date, 'evening', 'scheduled', NULL, $11, 'مناوبة التمريض المسائية')`,
+        [
+          crypto.randomUUID(), facilityId, empIds['EMP-000001'], deptIds.GEN,
+          crypto.randomUUID(), empIds['EMP-000002'], deptIds.OR,
+          crypto.randomUUID(), empIds['EMP-000003'], deptIds.INP,
+          hr1,
+        ],
+      );
+
+      // Leave requests: 1 approved future study leave, 1 pending annual leave awaiting review
+      await db.query(
+        `INSERT INTO hr_leave_requests (
+           id, facility_id, request_no, employee_id, leave_type, start_date, end_date,
+           days_count, reason, status, requested_by, reviewed_by, reviewed_at, review_note
+         ) VALUES
+           ($1,$2,'LVR-000001',$3,'study', current_date + 14, current_date + 16, 3, 'حضور المؤتمر السعودي للباطنية', 'approved', $4, $5, now() - interval '1 day', 'معتمد مع تغطية العيادة'),
+           ($6,$2,'LVR-000002',$7,'annual', current_date + 7, current_date + 11, 5, 'إجازة سنوية مستحقة وفق الجدول', 'pending', $8, NULL, NULL, NULL)`,
+        [
+          crypto.randomUUID(), facilityId, empIds['EMP-000001'], drAhmed, hr2,
+          crypto.randomUUID(), empIds['EMP-000003'], nurseUser,
+        ],
+      );
+    }
+  }
+
   // Seeded documents use fixed numbers, so move each sequence past the highest
   // demo number. The floor is derived from the seeded rows rather than a magic
   // constant: a fixed floor broke silently once a module seeded more records
@@ -1089,6 +1188,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ['nutrition_tray', 'nutrition_trays', 'tray_no', 'TRY'],
     ['cssd_pack', 'cssd_packs', 'pack_no', 'CSS'],
     ['cssd_load', 'cssd_sterilization_loads', 'load_no', 'CSL'],
+    ['hr_employee', 'hr_employees', 'employee_no', 'EMP'],
+    ['hr_leave', 'hr_leave_requests', 'request_no', 'LVR'],
   ];
   for (const [name, table, column, prefix] of sequenceSources) {
     const max = await db.query<{ next: number }>(
