@@ -1,14 +1,10 @@
 -- ============================================================================
--- HMS Enterprise — Complete Supabase Schema & RLS Bootstrap
--- Target Supabase Project: https://pxawcoccgcuzoustyugh.supabase.co
--- Migrations included: 19 (001_core.sql .. 019_supabase_hardening.sql)
--- Generated deterministically with exact schema_migrations SHA-256 checksums.
---
--- HOW TO RUN IN SUPABASE SQL EDITOR:
---   1. Open https://supabase.com/dashboard/project/pxawcoccgcuzoustyugh/sql/new
---   2. Paste the contents of this file and click "Run".
---   3. Add DATABASE_URL (Session Pooler URI) to Vercel environment variables
---      so the API automatically seeds demo accounts using production keys.
+-- HMS Enterprise — Supabase Schema & RLS Bootstrap (Schema Only)
+-- Project : https://pxawcoccgcuzoustyugh.supabase.co
+-- Pooler  : aws-0-ap-northeast-2.pooler.supabase.com:5432 (user: postgres.pxawcoccgcuzoustyugh)
+-- Includes: 19 migrations (001_core.sql .. 019_supabase_hardening.sql)
+-- Use this file when connecting Vercel with SEED_DEMO=true so the API seeds
+-- encrypted demo records using Vercel's ENCRYPTION_KEY & SEARCH_HASH_KEY.
 -- ============================================================================
 
 BEGIN;

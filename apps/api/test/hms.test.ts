@@ -3396,12 +3396,29 @@ describe('login resilience, session envelope security & Supabase bootstrap bundl
     expect(meTampered.statusCode).toBe(401);
   });
 
-  it('validates db/supabase-schema.sql execution, checksum parity, and PostgREST anon role lockdown', async () => {
+  it('validates db/supabase-full-init.sql execution, 29 demo users, URL encoding, and PostgREST anon lockdown', async () => {
     const fs = await import('node:fs');
     const path = await import('node:path');
     const { PGlite } = await import('@electric-sql/pglite');
+    const { normalizePostgresUrl } = await import('../src/config');
 
-    const sqlPath = path.resolve(__dirname, '../../../db/supabase-schema.sql');
+    // Placeholder URIs from Supabase Connect dialog must safely return undefined
+    expect(
+      normalizePostgresUrl(
+        'postgresql://postgres.pxawcoccgcuzoustyugh:[YOUR-PASSWORD]@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres',
+      ),
+    ).toBeUndefined();
+
+    // Special characters (@, #) in raw passwords must be percent-encoded automatically
+    expect(
+      normalizePostgresUrl(
+        'postgresql://postgres.pxawcoccgcuzoustyugh:My#Pass@2026@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres',
+      ),
+    ).toBe(
+      'postgresql://postgres.pxawcoccgcuzoustyugh:My%23Pass%402026@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres',
+    );
+
+    const sqlPath = path.resolve(__dirname, '../../../db/supabase-full-init.sql');
     const bundleSql = fs.readFileSync(sqlPath, 'utf8');
     const pg = await PGlite.create();
     try {
@@ -3415,9 +3432,15 @@ describe('login resilience, session envelope security & Supabase bootstrap bundl
 
       await pg.exec(bundleSql);
 
-      // Verify all 19 migrations are recorded
+      // Verify all 19 migrations + 29 demo users + 2 facilities + 25 roles + 98 permissions are loaded
       const migs = await pg.query<{ count: string }>('SELECT count(*) FROM public.schema_migrations');
       expect(Number(migs.rows[0].count)).toBe(19);
+      const users = await pg.query<{ count: string }>('SELECT count(*) FROM public.users');
+      expect(Number(users.rows[0].count)).toBe(29);
+      const roles = await pg.query<{ count: string }>('SELECT count(*) FROM public.roles');
+      expect(Number(roles.rows[0].count)).toBe(25);
+      const perms = await pg.query<{ count: string }>('SELECT count(*) FROM public.permissions');
+      expect(Number(perms.rows[0].count)).toBe(99);
 
       // Verify anon role is strictly denied SELECT on users, sessions, and patients
       await expect(

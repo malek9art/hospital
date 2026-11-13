@@ -12,6 +12,11 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().optional(),
   POSTGRES_URL: z.string().optional(),
   SUPABASE_DB_URL: z.string().optional(),
+  SUPABASE_DB_HOST: z.string().optional(),
+  SUPABASE_DB_PORT: z.coerce.number().default(5432),
+  SUPABASE_DB_USER: z.string().optional(),
+  SUPABASE_DB_NAME: z.string().default('postgres'),
+  SUPABASE_DB_PASSWORD: z.string().optional(),
   DATABASE_SSL: z.enum(['auto', 'true', 'false']).default('auto'),
   SUPABASE_URL: z.string().optional(),
   NEXT_PUBLIC_SUPABASE_URL: z.string().optional(),
@@ -90,16 +95,55 @@ function loadSecrets(env: z.infer<typeof EnvSchema>) {
   };
 }
 
+/**
+ * Safely normalizes PostgreSQL connection URIs even when a user pastes a raw
+ * password containing `@`, `#`, or `?` into `postgresql://user:pass@host:port/db`.
+ * Returns `undefined` if the URI still contains a literal template placeholder
+ * such as `[YOUR-PASSWORD]` or `CHANGE_ME`.
+ */
+export function normalizePostgresUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.includes('[YOUR-PASSWORD]') || trimmed.includes('<YOUR-PASSWORD>') || trimmed.includes(':CHANGE_ME@')) {
+    return undefined;
+  }
+  const schemeMatch = trimmed.match(/^(postgres(?:ql)?:\/\/)(.+)$/i);
+  if (!schemeMatch) return trimmed;
+  const [, scheme, rest] = schemeMatch;
+  const atIdx = rest.lastIndexOf('@');
+  if (atIdx === -1) return trimmed;
+  const userInfo = rest.slice(0, atIdx);
+  const hostAndPath = rest.slice(atIdx + 1);
+  const colonIdx = userInfo.indexOf(':');
+  if (colonIdx === -1) return trimmed;
+  const user = userInfo.slice(0, colonIdx);
+  const rawPass = userInfo.slice(colonIdx + 1);
+  let decodedPass = rawPass;
+  try {
+    decodedPass = decodeURIComponent(rawPass);
+  } catch {
+    decodedPass = rawPass;
+  }
+  return `${scheme}${user}:${encodeURIComponent(decodedPass)}@${hostAndPath}`;
+}
+
 export function loadConfig(): AppConfig {
   const env = EnvSchema.parse(process.env);
   const secrets = loadSecrets(env);
-  const databaseUrl = [env.DATABASE_URL, env.SUPABASE_DB_URL, env.POSTGRES_URL]
-    .map((u) => u?.trim())
-    .find((u) => Boolean(u));
+  const builtFromParts =
+    env.SUPABASE_DB_HOST?.trim() && env.SUPABASE_DB_USER?.trim() && env.SUPABASE_DB_PASSWORD?.trim()
+      ? `postgresql://${encodeURIComponent(env.SUPABASE_DB_USER.trim())}:${encodeURIComponent(env.SUPABASE_DB_PASSWORD.trim())}@${env.SUPABASE_DB_HOST.trim()}:${env.SUPABASE_DB_PORT}/${encodeURIComponent(env.SUPABASE_DB_NAME.trim())}`
+      : undefined;
+  const databaseUrl = [env.DATABASE_URL, env.SUPABASE_DB_URL, env.POSTGRES_URL, builtFromParts]
+    .map((u) => normalizePostgresUrl(u))
+    .find((u): u is string => Boolean(u));
   const dbMode: 'pglite' | 'postgres' =
     env.DB_MODE ?? (env.NODE_ENV !== 'test' && databaseUrl ? 'postgres' : 'pglite');
   if (dbMode === 'postgres' && !databaseUrl) {
-    throw new Error('DATABASE_URL (or SUPABASE_DB_URL / POSTGRES_URL) is required when DB_MODE=postgres');
+    throw new Error(
+      'Valid DATABASE_URL (without [YOUR-PASSWORD] placeholder) or SUPABASE_DB_PASSWORD is required when DB_MODE=postgres',
+    );
   }
   const supabaseUrl = (env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL)?.trim() || undefined;
   return { ...env, DB_MODE: dbMode, databaseUrl, supabaseUrl, ...secrets };
