@@ -80,7 +80,7 @@ export async function billingRoutes(app: FastifyInstance) {
           throw err;
         }
       });
-      if (!(result as any).replayed) {
+      if (!('replayed' in (result as Record<string, unknown>) && (result as { replayed?: boolean }).replayed)) {
         const { writeAudit } = await import('../../lib/audit');
         const invoice = await db.query<{ patient_id: string }>('SELECT patient_id FROM invoices WHERE id = $1', [id]);
         await writeAudit(db, {

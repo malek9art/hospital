@@ -56,10 +56,13 @@ export async function pharmacyRoutes(app: FastifyInstance) {
            FROM prescription_items pi JOIN drugs d ON d.id = pi.drug_id WHERE pi.prescription_id = $1 ORDER BY pi.id`,
         [id],
       );
-      const allergies = await db.query(`SELECT allergen, severity, reaction FROM patient_allergies WHERE patient_id = $1 AND is_active = true`, [row.patient_id]);
+      const allergies = await db.query<{ allergen: string; severity: string; reaction: string }>(
+        `SELECT allergen, severity, reaction FROM patient_allergies WHERE patient_id = $1 AND is_active = true`,
+        [row.patient_id],
+      );
       const warnings: { type: string; severity: string; message: string }[] = [];
       for (const item of items.rows) {
-        for (const a of allergies.rows as any[]) {
+        for (const a of allergies.rows) {
           const allergen = normalize(a.allergen);
           if (allergen.length > 2 && (normalize(item.drug_name).includes(allergen) || normalize(item.name_en).includes(allergen))) {
             warnings.push({ type: 'allergy', severity: 'major', message: `حساسية مسجلة (${a.allergen}) تتعارض مع ${item.drug_name}` });

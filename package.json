@@ -15,6 +15,8 @@
     "db:seed": "npm -w apps/api run db:seed",
     "db:reset": "npm -w apps/api run db:reset",
     "test": "npm -w apps/api run test",
-    "typecheck": "npm -w apps/api run typecheck && npm -w apps/web run typecheck"
+    "typecheck": "npm -w apps/api run typecheck && npm -w apps/web run typecheck",
+    "smoke": "node scripts/ui-smoke.mjs",
+    "bench": "node scripts/perf-bench.mjs"
   }
 }

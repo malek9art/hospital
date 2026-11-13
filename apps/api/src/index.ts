@@ -14,8 +14,8 @@ async function main() {
       if (result.seeded) console.log('[seed] synthetic demo data created');
     }
   } else {
-    const check = await db.query(`SELECT to_regclass('public.schema_migrations') AS t`);
-    if (!(check.rows[0] as any)?.t) {
+    const check = await db.query<{ t: string | null }>(`SELECT to_regclass('public.schema_migrations') AS t`);
+    if (!check.rows[0]?.t) {
       throw new Error('Database is not migrated. Run "npm run db:migrate" before starting in production.');
     }
   }

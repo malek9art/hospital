@@ -148,7 +148,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
         requestId: req.id,
       });
     }
-    const anyErr = err as any;
+    const anyErr = err as { validation?: unknown; message?: string; statusCode?: number; code?: string; detail?: string };
     if (anyErr?.validation) {
       return reply.code(400).send({
         error: { code: 'validation_error', message: 'طلب غير صالح', details: anyErr.message },

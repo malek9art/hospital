@@ -324,12 +324,12 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   );
 
   // --------------------------------------------------------------- Catalogue --
-  const labTests: [string, string, string, string, string, number, number, number, number, number][] = [
+  const labTests: [string, string, string, string, string, number, number, number | null, number, number][] = [
     ['718-7', 'الهيموغلوبين', 'Hemoglobin', 'blood', 'g/dL', 13, 17, 7, 20, 25],
     ['6690-2', 'كرات الدم البيضاء', 'WBC', 'blood', '10^3/uL', 4, 11, 1.5, 30, 25],
     ['2345-7', 'الغلوكوز صائم', 'Fasting Glucose', 'blood', 'mg/dL', 70, 110, 40, 500, 20],
     ['2160-0', 'الكرياتينين', 'Creatinine', 'blood', 'mg/dL', 0.6, 1.3, 0.2, 6, 25],
-    ['4548-4', 'الهيموغلوبين السكري', 'HbA1c', 'blood', '%', 4, 5.7, null as any, 12, 60],
+    ['4548-4', 'الهيموغلوبين السكري', 'HbA1c', 'blood', '%', 4, 5.7, null, 12, 60],
   ];
   for (const t of labTests) {
     await db.query(
@@ -1103,7 +1103,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   }
 
   await writeAudit(
-    { query: db.query.bind(db) } as any,
+    db,
     {
       facilityId,
       action: 'system.seed',

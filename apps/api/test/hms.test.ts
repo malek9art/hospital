@@ -3008,3 +3008,83 @@ describe('CSSD sterile processing and infection prevention & control', () => {
     expect(Number(board.totals.hygiene_compliance_30d)).toBeGreaterThan(70);
   });
 });
+
+describe('Platform UX, RBAC & Global Search Enhancements', () => {
+  it('allows surgeon (inpatient.admit) to list inpatient beds while denying lab technician', async () => {
+    const res = await expectStatus(await call(agents.surgeon, 'GET', '/api/inpatient/beds'), 200, 'surgeon beds');
+    expect(Array.isArray(res.beds)).toBe(true);
+    expect(res.beds.length).toBeGreaterThan(0);
+
+    const denied = await call(agents.lab1, 'GET', '/api/inpatient/beds');
+    expect(denied.statusCode).toBe(403);
+  });
+
+  it('persists user language preference via PATCH /api/auth/preferences with CSRF and validation', async () => {
+    const noCsrf = await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/preferences',
+      cookies: agents.doctor.cookies,
+      payload: { preferredLanguage: 'en' },
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    const badLang = await call(agents.doctor, 'PATCH', '/api/auth/preferences', { preferredLanguage: 'fr' });
+    expect(badLang.statusCode).toBe(400);
+
+    const updated = await expectStatus(
+      await call(agents.doctor, 'PATCH', '/api/auth/preferences', { preferredLanguage: 'en' }),
+      200,
+      'set lang en',
+    );
+    expect(updated.preferredLanguage).toBe('en');
+
+    const meEn = await expectStatus(await call(agents.doctor, 'GET', '/api/auth/me'), 200, 'me en');
+    expect(meEn.user.preferredLanguage).toBe('en');
+
+    await expectStatus(
+      await call(agents.doctor, 'PATCH', '/api/auth/preferences', { preferredLanguage: 'ar' }),
+      200,
+      'restore lang ar',
+    );
+  });
+
+  it('serves 7d and 30d executive dashboard trends, ward occupancy, and clinical alerts', async () => {
+    const d30 = await expectStatus(await call(agents.admin, 'GET', '/api/dashboard?days=30'), 200, 'dashboard 30d');
+    expect(d30.days).toBe(30);
+    expect(Array.isArray(d30.trend)).toBe(true);
+    expect(d30.trend).toHaveLength(30);
+    expect(Array.isArray(d30.bedsByWard)).toBe(true);
+    expect(Array.isArray(d30.actionableAlerts)).toBe(true);
+
+    const denied = await call(agents.patient, 'GET', '/api/dashboard?days=7');
+    expect(denied.statusCode).toBe(403);
+  });
+
+  it('enforces RBAC filtering on global search (/api/search) and module transparency metadata', async () => {
+    const doctorSearch = await expectStatus(
+      await call(agents.doctor, 'GET', `/api/search?q=${encodeURIComponent(patient1.mrn)}`),
+      200,
+      'doctor search mrn',
+    );
+    expect(doctorSearch.items.some((i: any) => i.category === 'patient' && i.id === patient1.id)).toBe(true);
+
+    // Admin intentionally lacks clinical patient.read (least privilege), so patient records are excluded
+    const adminSearch = await expectStatus(
+      await call(agents.admin, 'GET', `/api/search?q=${encodeURIComponent(patient1.mrn)}`),
+      200,
+      'admin search mrn',
+    );
+    expect(adminSearch.items.some((i: any) => i.category === 'patient')).toBe(false);
+
+    const portalSearch = await expectStatus(
+      await call(agents.patient, 'GET', `/api/search?q=${encodeURIComponent(patient1.mrn)}`),
+      200,
+      'portal search mrn',
+    );
+    expect(portalSearch.items).toEqual([]);
+
+    const mods = await expectStatus(await call(agents.admin, 'GET', '/api/meta/modules'), 200, 'meta modules');
+    expect(mods.modules.every((m: any) => 'missing' in m)).toBe(true);
+  });
+});
+

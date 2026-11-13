@@ -153,70 +153,72 @@ export async function nutritionRoutes(app: FastifyInstance) {
     const auth = requireAuth(req);
     requirePermission(auth, 'nutrition.read');
     return withTenant(auth, async (db) => {
-      const rows = await db.query(
-        `SELECT a.id AS admission_id, a.admission_no, a.admitted_at,
-                p.id AS patient_id, p.mrn, p.full_name_ar AS patient_name,
-                date_part('year', age(p.date_of_birth))::int AS age_years,
-                w.name_ar AS ward_name, r.room_no, b.bed_no,
-                s.id AS screening_id, s.score AS screening_score, s.risk_level, s.bmi,
-                s.weight_kg, s.screening_date, s.recorded_at AS screened_at,
-                d.id AS diet_order_id, d.order_no, d.diet_type, d.texture, d.restrictions,
-                d.energy_target_kcal, d.protein_target_g, d.fluid_limit_ml,
-                t.id AS tube_order_id, t.route AS tube_route, t.formula_name, t.kcal_day,
-                t.volume_ml_day, t.protein_g_day,
-                COALESCE(tray.total, 0)::int AS trays_total,
-                COALESCE(tray.done, 0)::int AS trays_done,
-                COALESCE(tray.pending, 0)::int AS trays_pending,
-                tray.kcal_consumed,
-                COALESCE(ass.assumed, false) AS assessed
-           FROM admissions a
-           JOIN patients p ON p.id = a.patient_id
-           JOIN encounters e ON e.id = a.encounter_id
-           LEFT JOIN beds b ON b.id = a.bed_id
-           LEFT JOIN rooms r ON r.id = b.room_id
-           LEFT JOIN wards w ON w.id = b.ward_id
-           LEFT JOIN LATERAL (
-             SELECT * FROM nutrition_screenings ns WHERE ns.admission_id = a.id ORDER BY ns.recorded_at DESC LIMIT 1
-           ) s ON true
-           LEFT JOIN LATERAL (
-             SELECT EXISTS (SELECT 1 FROM nutrition_assessments na WHERE na.admission_id = a.id) AS assumed
-           ) ass ON true
-           LEFT JOIN nutrition_diet_orders d ON d.admission_id = a.id AND d.status = 'active'
-           LEFT JOIN nutrition_tube_orders t ON t.admission_id = a.id AND t.status = 'active'
-           LEFT JOIN LATERAL (
-             SELECT count(*) AS total,
-                    count(*) FILTER (WHERE tr.status IN ('consumed','refused')) AS done,
-                    count(*) FILTER (WHERE tr.status IN ('ordered','prepared','delivered')) AS pending,
-                    COALESCE(sum(tr.kcal_consumed), 0) AS kcal_consumed
-               FROM nutrition_trays tr
-              WHERE tr.admission_id = a.id AND tr.tray_date = current_date
-           ) tray ON true
-          WHERE a.facility_id = $1 AND a.status = 'active'
-          ORDER BY CASE COALESCE(s.risk_level, 'none') WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
-                   a.admitted_at`,
-        [auth.activeFacilityId],
-      );
-      const totals = await db.query<any>(
-        `SELECT count(*)::int AS inpatients,
-                count(*) FILTER (WHERE s.risk_level = 'high')::int AS high_risk,
-                count(*) FILTER (WHERE d.diet_type = 'npo')::int AS npo,
-                count(*) FILTER (WHERE s.id IS NULL OR s.screening_date < current_date - 7)::int AS needs_screening,
-                count(*) FILTER (WHERE d.id IS NULL)::int AS without_diet
-           FROM admissions a
-           LEFT JOIN LATERAL (SELECT * FROM nutrition_screenings ns WHERE ns.admission_id = a.id ORDER BY ns.recorded_at DESC LIMIT 1) s ON true
-           LEFT JOIN nutrition_diet_orders d ON d.admission_id = a.id AND d.status = 'active'
-          WHERE a.facility_id = $1 AND a.status = 'active'`,
-        [auth.activeFacilityId],
-      );
-      const trays = await db.query<any>(
-        `SELECT count(*) FILTER (WHERE status IN ('ordered','prepared'))::int AS pending,
-                count(*) FILTER (WHERE status = 'delivered')::int AS awaiting_intake,
-                count(*) FILTER (WHERE status = 'consumed')::int AS consumed,
-                count(*) FILTER (WHERE status = 'refused')::int AS refused,
-                COALESCE(round(avg(intake_pct) FILTER (WHERE intake_pct IS NOT NULL), 0), 0)::int AS avg_intake_pct
-           FROM nutrition_trays WHERE facility_id = $1 AND tray_date = current_date`,
-        [auth.activeFacilityId],
-      );
+      const [rows, totals, trays] = await Promise.all([
+        db.query(
+          `SELECT a.id AS admission_id, a.admission_no, a.admitted_at,
+                  p.id AS patient_id, p.mrn, p.full_name_ar AS patient_name,
+                  date_part('year', age(p.date_of_birth))::int AS age_years,
+                  w.name_ar AS ward_name, r.room_no, b.bed_no,
+                  s.id AS screening_id, s.score AS screening_score, s.risk_level, s.bmi,
+                  s.weight_kg, s.screening_date, s.recorded_at AS screened_at,
+                  d.id AS diet_order_id, d.order_no, d.diet_type, d.texture, d.restrictions,
+                  d.energy_target_kcal, d.protein_target_g, d.fluid_limit_ml,
+                  t.id AS tube_order_id, t.route AS tube_route, t.formula_name, t.kcal_day,
+                  t.volume_ml_day, t.protein_g_day,
+                  COALESCE(tray.total, 0)::int AS trays_total,
+                  COALESCE(tray.done, 0)::int AS trays_done,
+                  COALESCE(tray.pending, 0)::int AS trays_pending,
+                  tray.kcal_consumed,
+                  COALESCE(ass.assumed, false) AS assessed
+             FROM admissions a
+             JOIN patients p ON p.id = a.patient_id
+             JOIN encounters e ON e.id = a.encounter_id
+             LEFT JOIN beds b ON b.id = a.bed_id
+             LEFT JOIN rooms r ON r.id = b.room_id
+             LEFT JOIN wards w ON w.id = b.ward_id
+             LEFT JOIN LATERAL (
+               SELECT * FROM nutrition_screenings ns WHERE ns.admission_id = a.id ORDER BY ns.recorded_at DESC LIMIT 1
+             ) s ON true
+             LEFT JOIN LATERAL (
+               SELECT EXISTS (SELECT 1 FROM nutrition_assessments na WHERE na.admission_id = a.id) AS assumed
+             ) ass ON true
+             LEFT JOIN nutrition_diet_orders d ON d.admission_id = a.id AND d.status = 'active'
+             LEFT JOIN nutrition_tube_orders t ON t.admission_id = a.id AND t.status = 'active'
+             LEFT JOIN LATERAL (
+               SELECT count(*) AS total,
+                      count(*) FILTER (WHERE tr.status IN ('consumed','refused')) AS done,
+                      count(*) FILTER (WHERE tr.status IN ('ordered','prepared','delivered')) AS pending,
+                      COALESCE(sum(tr.kcal_consumed), 0) AS kcal_consumed
+                 FROM nutrition_trays tr
+                WHERE tr.admission_id = a.id AND tr.tray_date = current_date
+             ) tray ON true
+            WHERE a.facility_id = $1 AND a.status = 'active'
+            ORDER BY CASE COALESCE(s.risk_level, 'none') WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
+                     a.admitted_at`,
+          [auth.activeFacilityId],
+        ),
+        db.query<Record<string, unknown>>(
+          `SELECT count(*)::int AS inpatients,
+                  count(*) FILTER (WHERE s.risk_level = 'high')::int AS high_risk,
+                  count(*) FILTER (WHERE d.diet_type = 'npo')::int AS npo,
+                  count(*) FILTER (WHERE s.id IS NULL OR s.screening_date < current_date - 7)::int AS needs_screening,
+                  count(*) FILTER (WHERE d.id IS NULL)::int AS without_diet
+             FROM admissions a
+             LEFT JOIN LATERAL (SELECT * FROM nutrition_screenings ns WHERE ns.admission_id = a.id ORDER BY ns.recorded_at DESC LIMIT 1) s ON true
+             LEFT JOIN nutrition_diet_orders d ON d.admission_id = a.id AND d.status = 'active'
+            WHERE a.facility_id = $1 AND a.status = 'active'`,
+          [auth.activeFacilityId],
+        ),
+        db.query<Record<string, unknown>>(
+          `SELECT count(*) FILTER (WHERE status IN ('ordered','prepared'))::int AS pending,
+                  count(*) FILTER (WHERE status = 'delivered')::int AS awaiting_intake,
+                  count(*) FILTER (WHERE status = 'consumed')::int AS consumed,
+                  count(*) FILTER (WHERE status = 'refused')::int AS refused,
+                  COALESCE(round(avg(intake_pct) FILTER (WHERE intake_pct IS NOT NULL), 0), 0)::int AS avg_intake_pct
+             FROM nutrition_trays WHERE facility_id = $1 AND tray_date = current_date`,
+          [auth.activeFacilityId],
+        ),
+      ]);
       return {
         items: rows.rows.map((r: any) => ({
           ...r,
@@ -825,7 +827,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
       const patient = await loadPatientOr404(db, patientId);
       await authorizeChartAccess(db, auth, patient, 'clinical', { ip: req.ip, accessType: 'nutrition_file' });
 
-      const [screenings, assessments, orders, tubes, followups] = await Promise.all([
+      const [screenings, assessments, orders, tubes, followups, trays, dietary] = await Promise.all([
         db.query(`SELECT * FROM nutrition_screenings WHERE patient_id = $1 ORDER BY recorded_at DESC LIMIT 20`, [patientId]),
         db.query(`SELECT * FROM nutrition_assessments WHERE patient_id = $1 ORDER BY assessed_at DESC LIMIT 20`, [patientId]),
         db.query(
@@ -840,18 +842,18 @@ export async function nutritionRoutes(app: FastifyInstance) {
           `SELECT f.*, u.full_name_ar AS recorded_by_name
              FROM nutrition_followups f JOIN users u ON u.id = f.recorded_by
             WHERE f.patient_id = $1 ORDER BY f.recorded_at DESC LIMIT 20`, [patientId]),
+        db.query(
+          `SELECT t.*, u.full_name_ar AS delivered_by_name
+             FROM nutrition_trays t LEFT JOIN users u ON u.id = t.delivered_by
+            WHERE t.patient_id = $1 AND t.tray_date >= current_date - 2
+            ORDER BY t.tray_date DESC, t.meal`,
+          [patientId],
+        ),
+        db.query(
+          `SELECT allergen, reaction, severity FROM patient_allergies WHERE patient_id = $1 AND is_active = true`,
+          [patientId],
+        ),
       ]);
-      const trays = await db.query(
-        `SELECT t.*, u.full_name_ar AS delivered_by_name
-           FROM nutrition_trays t LEFT JOIN users u ON u.id = t.delivered_by
-          WHERE t.patient_id = $1 AND t.tray_date >= current_date - 2
-          ORDER BY t.tray_date DESC, t.meal`,
-        [patientId],
-      );
-      const dietary = await db.query(
-        `SELECT allergen, reaction, severity FROM patient_allergies WHERE patient_id = $1 AND is_active = true`,
-        [patientId],
-      );
       const required = [...requiredRestrictions(dietary.rows as unknown as { allergen: string }[]).entries()]
         .map(([code, name]) => ({ code, name }));
       const activeOrder = orders.rows.find((o: any) => o.status === 'active') ?? null;

@@ -185,4 +185,31 @@ export async function authRoutes(app: FastifyInstance) {
     reply.code(200);
     return { ok: true, facilityId };
   });
+
+  app.patch('/api/auth/preferences', async (req) => {
+    const auth = requireAuth(req);
+    const body = parse(
+      z.object({
+        preferredLanguage: z.enum(['ar', 'en']),
+      }),
+      req.body,
+    );
+    const db = await getDb();
+    await db.query('UPDATE users SET preferred_language = $1, updated_at = now() WHERE id = $2', [
+      body.preferredLanguage,
+      auth.user.id,
+    ]);
+    await db.asRole('hms_app', { 'app.facility_ids': auth.facilities.map((f) => f.id).join(',') }, (q) =>
+      writeAudit(q, {
+        actorUserId: auth.user.id,
+        facilityId: auth.activeFacilityId,
+        action: 'auth.preferences.update',
+        entityType: 'user',
+        entityId: auth.user.id,
+        detail: { preferredLanguage: body.preferredLanguage },
+        ip: req.ip,
+      }),
+    );
+    return { ok: true, preferredLanguage: body.preferredLanguage };
+  });
 }

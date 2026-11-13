@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parse, zId } from '../../lib/validation';
-import { requireAuth, requirePermission } from '../../auth/context';
+import { requireAuth, requirePermission, hasPermission } from '../../auth/context';
 import { withTenant, withTenantAudited, nextDocumentNo } from '../../lib/tenant';
 import { conflict, forbidden, notFound } from '../../lib/errors';
 import { authorizeChartAccess, loadPatientOr404 } from '../patients/access';
@@ -35,7 +35,9 @@ export async function inpatientRoutes(app: FastifyInstance) {
   // ------------------------------------------------------------------ Beds ----
   app.get('/api/inpatient/beds', async (req) => {
     const auth = requireAuth(req);
-    requirePermission(auth, 'inpatient.bed.manage');
+    if (!hasPermission(auth, 'inpatient.bed.manage') && !hasPermission(auth, 'inpatient.admit')) {
+      requirePermission(auth, 'inpatient.bed.manage');
+    }
     return withTenant(auth, async (db) => {
       const rows = await db.query<any>(
         `SELECT b.id, b.bed_no, b.status AS bed_status, r.room_no, r.room_type, w.id AS ward_id,

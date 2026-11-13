@@ -307,7 +307,7 @@ export async function encounterRoutes(app: FastifyInstance) {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
           [orderId, enc.facility_id, orderNo, enc.patient_id, id, auth.user.id, b.priority, b.clinicalNotes ?? null],
         );
-        for (const t of tests.rows as any[]) {
+        for (const t of tests.rows as Array<{ code: string; name_ar: string; price: number | string }>) {
           const itemId = crypto.randomUUID();
           await db.query(
             `INSERT INTO lab_order_items (id, facility_id, order_id, test_code, price) VALUES ($1,$2,$3,$4,$5)`,
@@ -370,7 +370,8 @@ export async function encounterRoutes(app: FastifyInstance) {
         if (drugs.rows.length !== b.items.length) throw notFound('أحد الأدوية غير معرّف');
         const allergies = await db.query<{ allergen: string }>(`SELECT allergen FROM patient_allergies WHERE patient_id = $1 AND is_active = true`, [enc.patient_id]);
         const warnings: { type: string; message: string }[] = [];
-        for (const drug of drugs.rows as any[]) {
+        const drugRows = drugs.rows as Array<{ id: string; code: string; name_ar: string; name_en: string; price: number | string }>;
+        for (const drug of drugRows) {
           for (const a of allergies.rows) {
             const allergen = normalize(a.allergen);
             if (allergen.length > 2 && (normalize(drug.name_ar).includes(allergen) || normalize(drug.name_en).includes(allergen))) {
@@ -390,7 +391,7 @@ export async function encounterRoutes(app: FastifyInstance) {
           [rxId, enc.facility_id, rxNo, enc.patient_id, id, auth.user.id, b.notes ?? null],
         );
         for (const item of b.items) {
-          const drug = (drugs.rows as any[]).find((d) => d.id === item.drugId);
+          const drug = drugRows.find((d) => d.id === item.drugId);
           await db.query(
             `INSERT INTO prescription_items (id, facility_id, prescription_id, drug_id, dose, route, frequency,
                duration_days, quantity, instructions, price, interval_hours)

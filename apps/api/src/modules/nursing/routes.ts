@@ -89,7 +89,17 @@ async function dueDoses(db: any, encounterIds: string[], now = new Date()): Prom
     [encounterIds],
   );
   const out: Record<string, DueDose[]> = {};
-  for (const row of items.rows as any[]) {
+  for (const row of items.rows as Array<{
+    id: string;
+    encounter_id: string;
+    drug: string;
+    dose: string;
+    route: string;
+    frequency: string;
+    interval_hours: number | null;
+    is_high_alert: boolean;
+    last_given: string | null;
+  }>) {
     const interval = parseIntervalHours(row.frequency, row.interval_hours);
     const anchor = row.last_given ? new Date(row.last_given) : new Date(now.getTime() - interval * 3600_000 + 30 * 60_000);
     const nextDue = row.last_given
@@ -116,7 +126,7 @@ export async function nursingRoutes(app: FastifyInstance) {
   app.get('/api/nursing/board', async (req) => {
     const auth = requireAuth(req);
     requirePermission(auth, 'nursing.read');
-    return withTenant(auth, async (db: any) => {
+    return withTenant(auth, async (db) => {
       const rows = await db.query(
         `SELECT a.id AS admission_id, a.admission_no, a.admitted_at, a.patient_id, a.encounter_id,
                 p.mrn, p.full_name_ar AS patient_name, p.sex,
@@ -135,12 +145,12 @@ export async function nursingRoutes(app: FastifyInstance) {
           ORDER BY w.name_ar NULLS LAST, r.room_no NULLS LAST, b.bed_no`,
         [auth.activeFacilityId],
       );
-      const admissions = rows.rows as any[];
+      const admissions = rows.rows as Array<Record<string, unknown> & { encounter_id: string }>;
       const encounterIds = admissions.map((a) => a.encounter_id);
       const dues = await dueDoses(db, encounterIds);
 
       const taskRows = encounterIds.length
-        ? await db.query(
+        ? await db.query<{ encounter_id: string; due_tasks: number; open_tasks: number }>(
             `SELECT cp.encounter_id,
                     count(*) FILTER (WHERE t.status = 'pending' AND (t.due_at IS NULL OR t.due_at <= now() + interval '60 minutes'))::int AS due_tasks,
                     count(*) FILTER (WHERE t.status = 'pending')::int AS open_tasks
@@ -149,12 +159,12 @@ export async function nursingRoutes(app: FastifyInstance) {
               GROUP BY cp.encounter_id`,
             [encounterIds],
           )
-        : { rows: [] };
-      const tasksByEncounter = new Map((taskRows.rows as any[]).map((r) => [r.encounter_id, r]));
+        : { rows: [] as Array<{ encounter_id: string; due_tasks: number; open_tasks: number }> };
+      const tasksByEncounter = new Map(taskRows.rows.map((r) => [r.encounter_id, r]));
 
       const items = admissions.map((a) => {
         const doses = (dues[a.encounter_id] ?? []).sort((x, y) => x.nextDueAt.localeCompare(y.nextDueAt));
-        const tasks = tasksByEncounter.get(a.encounter_id) as any;
+        const tasks = tasksByEncounter.get(a.encounter_id);
         return {
           ...a,
           next_due: doses[0] ?? null,
@@ -504,8 +514,8 @@ export async function nursingRoutes(app: FastifyInstance) {
     requirePermission(auth, 'nursing.read');
     const q = parse(z.object({ admissionId: zId.optional(), encounterId: zId.optional(), patientId: zId.optional() }), req.query);
     if (!q.admissionId && !q.encounterId && !q.patientId) throw conflict('حدد التنويم أو الزيارة أو المريض');
-    return withTenant(auth, async (db: any) => {
-      const params: any[] = [auth.activeFacilityId];
+    return withTenant(auth, async (db) => {
+      const params: unknown[] = [auth.activeFacilityId];
       let filter = '';
       if (q.admissionId) {
         params.push(q.admissionId);
@@ -527,17 +537,18 @@ export async function nursingRoutes(app: FastifyInstance) {
           ORDER BY cp.created_at DESC`,
         params,
       );
-      const ids = (plans.rows as any[]).map((p) => p.id);
+      const planRows = plans.rows as Array<Record<string, unknown> & { id: string }>;
+      const ids = planRows.map((p) => p.id);
       const tasks = ids.length
-        ? await db.query(
+        ? await db.query<Record<string, unknown> & { care_plan_id: string }>(
             `SELECT t.*, u.full_name_ar AS completed_by_name FROM care_plan_tasks t
                LEFT JOIN users u ON u.id = t.completed_by
               WHERE t.care_plan_id = ANY($1::uuid[]) ORDER BY t.due_at NULLS LAST, t.created_at`,
             [ids],
           )
-        : { rows: [] };
+        : { rows: [] as Array<Record<string, unknown> & { care_plan_id: string }> };
       return {
-        plans: (plans.rows as any[]).map((p) => ({ ...p, tasks: (tasks.rows as any[]).filter((t) => t.care_plan_id === p.id) })),
+        plans: planRows.map((p) => ({ ...p, tasks: tasks.rows.filter((t) => t.care_plan_id === p.id) })),
       };
     });
   });

@@ -491,7 +491,7 @@ export async function icuRoutes(app: FastifyInstance) {
         if (!recent.rows[0]) {
           throw conflict('سجّل علامات حيوية حديثة (خلال ٦ ساعات) قبل حساب SOFA');
         }
-        const result = computeSofa(body as any);
+        const result = computeSofa(body as SofaInput);
         const sid = crypto.randomUUID();
         await db.query(
           `INSERT INTO icu_scores (id, facility_id, stay_id, kind, components, total, recorded_by)

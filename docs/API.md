@@ -29,6 +29,17 @@
 | POST | `/api/auth/password` | تغيير كلمة المرور (يُبطل الجلسات) |
 | GET/POST | `/api/auth/sessions`, `/api/auth/sessions/:id/revoke` | الجلسات النشطة وإبطالها |
 | POST | `/api/auth/context` | تبديل المنشأة `{facilityId}` (ضمن عضويات المستخدم) |
+| PATCH | `/api/auth/preferences` | حفظ تفضيل اللغة للمستخدم `{preferredLanguage: 'ar' \| 'en'}` مع تدقيق |
+
+## البحث الشامل ولوحة القيادة والإدارة
+
+| Method | Path | الوصف |
+|---|---|---|
+| GET | `/api/dashboard?days=7\|30` | مؤشرات الأداء الفورية، اتجاه 7 أو 30 يومًا، إشغال الأجنحة، والتنبيهات القابلة للمتابعة (`report.read`) |
+| GET | `/api/search?q=` | بحث شامل مصفّى تلقائيًا بصلاحيات المستخدم (المرضى، المواعيد، الزيارات، الفواتير، حزم التعقيم) |
+| GET/POST/PATCH | `/api/admin/users`, `/api/admin/users/:id` | استعراض وإنشاء وتفعيل/تعطيل حسابات المستخدمين (`admin.users.read` / `admin.users.manage`) |
+| GET | `/api/admin/roles` \| `/api/admin/facilities` | مصفوفة الأدوار والصلاحيات وإحصاءات المنشآت |
+| GET/POST | `/api/admin/sessions`, `/api/admin/sessions/:id/revoke` | استعراض الجلسات الأمنية وإبطالها الفوري (`admin.sessions.manage`) |
 
 ## المرضى
 

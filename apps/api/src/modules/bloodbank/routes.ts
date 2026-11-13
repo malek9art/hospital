@@ -36,7 +36,7 @@ const STATUS_AR: Record<string, string> = {
 function splitType(t: string): { abo: 'A' | 'B' | 'AB' | 'O'; rh: '+' | '-' } {
   const m = /^(A|B|AB|O)([+-])$/.exec(t);
   if (!m) throw conflict('فصيلة دم غير صالحة');
-  return { abo: m[1] as any, rh: m[2] as any };
+  return { abo: m[1] as 'A' | 'B' | 'AB' | 'O', rh: m[2] as '+' | '-' };
 }
 
 /** Red-cell compatibility: recipient antibody rules (O- universal donor, AB+ universal recipient). */
