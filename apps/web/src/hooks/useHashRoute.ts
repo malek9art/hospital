@@ -36,6 +36,12 @@ export function navigate(path: string, replace = false) {
   }
 }
 
+export function clearHash() {
+  if (!window.location.hash) return;
+  window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+}
+
 export function useHashRoute(auth: Me | null, lastSavedHash?: string, onSaveLastHash?: (h: string) => void) {
   const [route, setRoute] = useState<ParsedRoute>(() => parseHash(window.location.hash));
 

@@ -14,6 +14,8 @@
     "db:migrate": "npm -w apps/api run db:migrate",
     "db:seed": "npm -w apps/api run db:seed",
     "db:reset": "npm -w apps/api run db:reset",
+    "db:supabase:sql": "node scripts/init-supabase.mjs --emit-sql",
+    "db:supabase:init": "node scripts/init-supabase.mjs",
     "test": "npm -w apps/api run test",
     "typecheck": "npm -w apps/api run typecheck && npm -w apps/web run typecheck",
     "smoke": "node scripts/ui-smoke.mjs",

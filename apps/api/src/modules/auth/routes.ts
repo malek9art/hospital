@@ -1,16 +1,17 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { parse } from '../../lib/validation';
 import {
   changePassword,
   confirmMfaSetup,
+  encodeSessionCookie,
   listSessions,
   login,
   revokeSession,
   startMfaSetup,
   verifyMfaForSession,
 } from '../../auth/service';
-import { assertSessionUsable, primaryRole, requireAuth } from '../../auth/context';
+import { assertSessionUsable, primaryRole, requireAuth, type AuthContext } from '../../auth/context';
 import { getDb } from '../../db';
 import { config } from '../../config';
 import { writeAudit } from '../../lib/audit';
@@ -18,8 +19,8 @@ import { AppError, forbidden } from '../../lib/errors';
 import { COOKIE_NAME } from '../../lib/constants';
 
 const LoginSchema = z.object({
-  email: z.string().email('بريد إلكتروني غير صالح'),
-  password: z.string().min(1).max(200),
+  email: z.string().trim().toLowerCase().email('بريد إلكتروني غير صالح'),
+  password: z.string().min(1, 'كلمة المرور مطلوبة').max(200),
 });
 
 const PasswordSchema = z.object({
@@ -27,7 +28,7 @@ const PasswordSchema = z.object({
   newPassword: z.string().min(12, 'كلمة المرور يجب ألا تقل عن 12 حرفًا').max(200),
 });
 
-export function setSessionCookie(reply: any, token: string) {
+export function setSessionCookie(reply: FastifyReply, token: string) {
   const cfg = config();
   reply.setCookie(COOKIE_NAME, token, {
     path: '/',
@@ -36,6 +37,34 @@ export function setSessionCookie(reply: any, token: string) {
     secure: cfg.COOKIE_SECURE,
     maxAge: cfg.SESSION_ABSOLUTE_HOURS * 3600,
   });
+}
+
+export function clearSessionCookie(reply: FastifyReply) {
+  const cfg = config();
+  reply.clearCookie(COOKIE_NAME, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: cfg.COOKIE_SECURE,
+  });
+}
+
+function refreshSessionEnvelopeCookie(
+  reply: FastifyReply,
+  auth: AuthContext,
+  patch: { mfa?: boolean; fid?: string },
+) {
+  const updated = encodeSessionCookie({
+    v: 1,
+    sid: auth.sessionId,
+    sec: auth.sessionSecretPart,
+    uid: auth.user.id,
+    fid: patch.fid ?? auth.activeFacilityId,
+    csrf: auth.csrfToken,
+    mfa: patch.mfa ?? auth.mfaVerified,
+    exp: auth.absoluteExpiresAtMs,
+  });
+  setSessionCookie(reply, updated);
 }
 
 export async function authRoutes(app: FastifyInstance) {
@@ -51,7 +80,11 @@ export async function authRoutes(app: FastifyInstance) {
     },
   }, async (req, reply) => {
     const body = parse(LoginSchema, req.body);
+    const prevAuth = req.auth;
     const result = await login(body.email, body.password, req.ip, req.headers['user-agent'] ?? '');
+    if (prevAuth) {
+      await revokeSession(prevAuth.sessionId, prevAuth.user.id, 'استبدال الجلسة بتسجيل دخول جديد').catch(() => undefined);
+    }
     setSessionCookie(reply, result.token);
     return {
       ok: true,
@@ -63,20 +96,22 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/api/auth/logout', async (req, reply) => {
     if (req.auth) {
-      await revokeSession(req.auth.sessionId, req.auth.user.id, 'تسجيل خروج');
+      await revokeSession(req.auth.sessionId, req.auth.user.id, 'تسجيل خروج').catch(() => undefined);
       const db = await getDb();
-      await db.asRole('hms_app', { 'app.facility_ids': '' }, (q) =>
-        writeAudit(q, {
-          actorUserId: req.auth!.user.id,
-          facilityId: req.auth!.activeFacilityId,
-          action: 'auth.logout',
-          entityType: 'session',
-          entityId: req.auth!.sessionId,
-          ip: req.ip,
-        }),
-      );
+      await db
+        .asRole('hms_app', { 'app.facility_ids': '' }, (q) =>
+          writeAudit(q, {
+            actorUserId: req.auth!.user.id,
+            facilityId: req.auth!.activeFacilityId,
+            action: 'auth.logout',
+            entityType: 'session',
+            entityId: req.auth!.sessionId,
+            ip: req.ip,
+          }),
+        )
+        .catch(() => undefined);
     }
-    reply.clearCookie(COOKIE_NAME, { path: '/' });
+    clearSessionCookie(reply);
     return { ok: true };
   });
 
@@ -100,16 +135,18 @@ export async function authRoutes(app: FastifyInstance) {
       facilities: auth.facilities,
       activeFacilityId: auth.activeFacilityId,
       mfaEnabled: auth.user.mfa_enabled,
+      mfaEnforced: auth.user.mfa_enforced,
       mfaVerified: auth.mfaVerified,
       csrfToken: auth.csrfToken,
       sessionId: auth.sessionId,
     };
   });
 
-  app.post('/api/auth/mfa/verify', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
+  app.post('/api/auth/mfa/verify', { config: { rateLimit: { max: 15, timeWindow: '1 minute' } } }, async (req, reply) => {
     const auth = requireAuth(req);
     const body = parse(z.object({ code: z.string().min(4).max(20) }), req.body);
     await verifyMfaForSession(auth, body.code);
+    refreshSessionEnvelopeCookie(reply, auth, { mfa: true });
     return { ok: true };
   });
 
@@ -120,10 +157,12 @@ export async function authRoutes(app: FastifyInstance) {
     return result;
   });
 
-  app.post('/api/auth/mfa/confirm', async (req) => {
+  app.post('/api/auth/mfa/confirm', async (req, reply) => {
     const auth = requireAuth(req);
-    const body = parse(z.object({ code: z.string().min(6).max(10) }), req.body);
-    return confirmMfaSetup(auth, body.code);
+    const body = parse(z.object({ code: z.string().min(6).max(20) }), req.body);
+    const out = await confirmMfaSetup(auth, body.code);
+    refreshSessionEnvelopeCookie(reply, auth, { mfa: true });
+    return out;
   });
 
   app.post('/api/auth/password', async (req) => {
@@ -172,6 +211,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (!auth.facilities.some((f) => f.id === facilityId)) throw forbidden('لا تملك صلاحية على هذه المنشأة');
     const db = await getDb();
     await db.query('UPDATE sessions SET facility_id = $1 WHERE id = $2', [facilityId, auth.sessionId]);
+    refreshSessionEnvelopeCookie(reply, auth, { fid: facilityId });
     await db.asRole('hms_app', { 'app.facility_ids': auth.facilities.map((f) => f.id).join(',') }, (q) =>
       writeAudit(q, {
         actorUserId: auth.user.id,

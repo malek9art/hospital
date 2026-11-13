@@ -3,6 +3,7 @@ import { getDb } from '../db';
 import { config } from '../config';
 import { AppError, unauthorized } from '../lib/errors';
 import { hmacToken } from '../lib/crypto';
+import { decodeSessionCookie } from './service';
 
 export interface FacilityRef {
   id: string;
@@ -27,6 +28,8 @@ export interface AuthUser {
 export interface AuthContext {
   user: AuthUser;
   sessionId: string;
+  sessionSecretPart: string;
+  absoluteExpiresAtMs: number;
   csrfToken: string;
   mfaVerified: boolean;
   roles: { role_id: string; facility_id: string; department_id: string | null }[];
@@ -42,29 +45,69 @@ declare module 'fastify' {
   }
 }
 
+interface SessionRow {
+  id: string;
+  user_id: string;
+  csrf_token: string;
+  facility_id: string | null;
+  mfa_verified: boolean;
+  idle_expires_at: string;
+  absolute_expires_at: string;
+  revoked_at: string | null;
+}
+
 export async function loadAuthFromToken(rawToken: string | undefined): Promise<AuthContext | null> {
-  if (!rawToken) return null;
+  const decoded = decodeSessionCookie(rawToken);
+  if (!decoded) return null;
   const db = await getDb();
   const cfg = config();
-  const tokenHash = hmacToken(rawToken);
-  const sess = await db.query<{
-    id: string;
-    user_id: string;
-    csrf_token: string;
-    facility_id: string | null;
-    mfa_verified: boolean;
-    idle_expires_at: string;
-    absolute_expires_at: string;
-    revoked_at: string | null;
-  }>(
+  const now = Date.now();
+  const tokenHash = hmacToken(decoded.secretForHash);
+  let sess = await db.query<SessionRow>(
     `SELECT id, user_id, csrf_token, facility_id, mfa_verified, idle_expires_at, absolute_expires_at, revoked_at
        FROM sessions WHERE token_hash = $1`,
     [tokenHash],
   );
-  const session = sess.rows[0];
+  let session = sess.rows[0];
+
+  // In serverless ephemeral PGlite mode (/tmp per container), concurrent requests
+  // may hit a sibling Lambda container whose local PGlite was seeded deterministically
+  // without this container's `sessions` row. Because `decodeSessionCookie` already
+  // verified the HMAC-SHA256 signature under `SESSION_SECRET`, hydrate the session
+  // row idempotently if the user & facility exist and are active.
+  const isEphemeralPglite =
+    cfg.DB_MODE === 'pglite' && (process.env.VERCEL === '1' || cfg.PGLITE_DIR.startsWith('/tmp'));
+  if (!session && isEphemeralPglite && decoded.envelope && decoded.envelope.exp > now) {
+    const env = decoded.envelope;
+    const uCheck = await db.query<{ id: string }>(
+      'SELECT id FROM users WHERE id = $1 AND is_active = true',
+      [env.uid],
+    );
+    const fCheck = await db.query<{ id: string }>(
+      'SELECT id FROM facilities WHERE id = $1 AND is_active = true',
+      [env.fid],
+    );
+    if (uCheck.rows[0] && fCheck.rows[0]) {
+      const idleIso = new Date(Math.min(env.exp, now + cfg.SESSION_IDLE_MINUTES * 60_000)).toISOString();
+      const absIso = new Date(env.exp).toISOString();
+      await db.query(
+        `INSERT INTO sessions (id, user_id, token_hash, csrf_token, facility_id, mfa_verified, idle_expires_at, absolute_expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (id) DO NOTHING`,
+        [env.sid, env.uid, tokenHash, env.csrf, env.fid, env.mfa, idleIso, absIso],
+      );
+      sess = await db.query<SessionRow>(
+        `SELECT id, user_id, csrf_token, facility_id, mfa_verified, idle_expires_at, absolute_expires_at, revoked_at
+           FROM sessions WHERE token_hash = $1`,
+        [tokenHash],
+      );
+      session = sess.rows[0];
+    }
+  }
+
   if (!session || session.revoked_at) return null;
-  const now = Date.now();
-  if (new Date(session.idle_expires_at).getTime() < now || new Date(session.absolute_expires_at).getTime() < now) {
+  const absoluteExpiresAtMs = new Date(session.absolute_expires_at).getTime();
+  if (new Date(session.idle_expires_at).getTime() < now || absoluteExpiresAtMs < now) {
     return null;
   }
 
@@ -129,6 +172,8 @@ export async function loadAuthFromToken(rawToken: string | undefined): Promise<A
   return {
     user,
     sessionId: session.id,
+    sessionSecretPart: decoded.secretForHash,
+    absoluteExpiresAtMs,
     csrfToken: session.csrf_token,
     mfaVerified: session.mfa_verified,
     roles: rolesRes.rows,
@@ -146,7 +191,15 @@ export function requireAuth(req: FastifyRequest): AuthContext {
 
 /** Enforces MFA gating: unverified-MFA sessions may only reach a tiny allowlist. */
 export function assertSessionUsable(auth: AuthContext, path: string) {
-  const allowed = ['/api/auth/mfa/verify', '/api/auth/mfa/setup', '/api/auth/logout', '/api/auth/me', '/api/auth/sessions'];
+  const allowed = [
+    '/api/auth/login',
+    '/api/auth/mfa/verify',
+    '/api/auth/mfa/setup',
+    '/api/auth/mfa/confirm',
+    '/api/auth/logout',
+    '/api/auth/me',
+    '/api/auth/sessions',
+  ];
   if (auth.user.mfa_enabled && !auth.mfaVerified && !allowed.includes(path)) {
     throw new AppError(403, 'mfa_required', 'يجب إكمال التحقق متعدد العوامل');
   }

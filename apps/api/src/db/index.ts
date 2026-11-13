@@ -177,7 +177,33 @@ export async function getDb(): Promise<Db> {
     instance = new PgliteDb(db);
   } else {
     const pg = await import('pg');
-    const pool = new pg.default.Pool({ connectionString: cfg.DATABASE_URL, max: 20 });
+    const rawUrl = cfg.databaseUrl!;
+    let cleanUrl = rawUrl;
+    let useSsl = cfg.DATABASE_SSL === 'true';
+    try {
+      const parsed = new URL(rawUrl);
+      const host = parsed.hostname.toLowerCase();
+      const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+      const sslMode = parsed.searchParams.get('sslmode')?.toLowerCase();
+      if (cfg.DATABASE_SSL === 'auto') {
+        useSsl = !isLocal && sslMode !== 'disable';
+      }
+      if (useSsl && sslMode && sslMode !== 'verify-full') {
+        // pg-connection-string v2 treats sslmode=require as verify-full, which rejects
+        // Supabase Supavisor's pooler CA chain unless ssl.rejectUnauthorized=false is authoritative.
+        parsed.searchParams.delete('sslmode');
+        cleanUrl = parsed.toString();
+      }
+    } catch {
+      /* keep rawUrl as-is if non-standard DSN */
+    }
+    const pool = new pg.default.Pool({
+      connectionString: cleanUrl,
+      max: process.env.VERCEL === '1' ? 5 : 20,
+      idleTimeoutMillis: 15_000,
+      connectionTimeoutMillis: 15_000,
+      ...(useSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+    });
     instance = new PgDb(pool);
   }
   return instance;
@@ -212,8 +238,14 @@ export async function runMigrations(db: Db) {
   for (const role of ['hms_app', 'hms_portal']) {
     try {
       await db.exec(`CREATE ROLE ${role} NOLOGIN NOBYPASSRLS`);
-    } catch (err: any) {
-      if (!/already exists/i.test(String(err?.message))) throw err;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/already exists/i.test(msg)) throw err;
+    }
+    try {
+      await db.exec(`DO $$ BEGIN EXECUTE format('GRANT ${role} TO %I', current_user); EXCEPTION WHEN OTHERS THEN NULL; END $$`);
+    } catch {
+      /* ignore on engines that disallow self-grant */
     }
   }
 

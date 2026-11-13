@@ -1,3 +1,4 @@
+import nodeCrypto from 'node:crypto';
 import { getDb } from './index';
 import { hashPassword, encryptField, blindIndex } from '../lib/crypto';
 import { writeAudit } from '../lib/audit';
@@ -169,8 +170,17 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     return { seeded: false, reason: 'already_seeded' };
   }
 
-  const facilityId = crypto.randomUUID();
-  const branchId = crypto.randomUUID();
+  let seedSeq = 0;
+  const nextSeedUuid = () => {
+    const h = nodeCrypto.createHash('sha256').update(`hms-demo-seed-v1:${++seedSeq}`).digest();
+    h[6] = (h[6] & 0x0f) | 0x40;
+    h[8] = (h[8] & 0x3f) | 0x80;
+    const hex = h.subarray(0, 16).toString('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+  };
+
+  const facilityId = nextSeedUuid();
+  const branchId = nextSeedUuid();
   await db.query(
     `INSERT INTO facilities (id, code, name_ar, name_en) VALUES ($1,'OBR','المستشفى السعودي الميداني - العبر','Saudi Field Hospital - Obar')`,
     [facilityId],
@@ -192,14 +202,14 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   ];
   const deptIds: Record<string, string> = {};
   for (const [code, ar, en, type] of deptDefs) {
-    const id = crypto.randomUUID();
+    const id = nextSeedUuid();
     deptIds[code] = id;
     await db.query('INSERT INTO departments (id, facility_id, code, name_ar, name_en, dept_type) VALUES ($1,$2,$3,$4,$5,$6)', [id, facilityId, code, ar, en, type]);
   }
 
   const theatreIds: Record<string, string> = {};
   for (const [code, ar, en] of [['OR-1', 'غرفة عمليات ١', 'Theatre 1'], ['OR-2', 'غرفة عمليات ٢', 'Theatre 2']] as const) {
-    const id = crypto.randomUUID();
+    const id = nextSeedUuid();
     theatreIds[code] = id;
     await db.query(
       `INSERT INTO operating_theatres (id, facility_id, dept_id, code, name_ar, name_en) VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -275,7 +285,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   ];
   const userIds: Record<string, string> = {};
   for (const [email, nameAr, nameEn, title, role, hash, dept] of users) {
-    const id = crypto.randomUUID();
+    const id = nextSeedUuid();
     userIds[role + ':' + email] = id;
     await db.query(
       `INSERT INTO users (id, email, password_hash, full_name_ar, full_name_en, job_title_ar, must_change_password, mfa_enforced)
@@ -288,7 +298,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     }
     await db.query('INSERT INTO user_roles (user_id, role_id, facility_id, department_id) VALUES ($1,$2,$3,$4)', [id, role, facilityId, dept ? deptIds[dept] : null]);
   }
-  const patientUserId = crypto.randomUUID();
+  const patientUserId = nextSeedUuid();
   await db.query(
     `INSERT INTO users (id, email, password_hash, full_name_ar, full_name_en, must_change_password) VALUES ($1,$2,$3,$4,$5,false)`,
     [patientUserId, 'patient@demo.hms', password.patient, 'محمد العسيري', 'Mohammed Alaseeri'],
@@ -307,7 +317,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   const patientIds: string[] = [];
   for (let i = 0; i < patientDefs.length; i++) {
     const [nameAr, nameEn, dob, sex, nid, blood, phone] = patientDefs[i];
-    const id = crypto.randomUUID();
+    const id = nextSeedUuid();
     patientIds.push(id);
     await db.query(
       `INSERT INTO patients (id, facility_id, mrn, national_id_enc, national_id_hash, full_name_ar, full_name_en,
@@ -321,17 +331,17 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   await db.query(
     `INSERT INTO patient_allergies (id, facility_id, patient_id, allergen, reaction, severity, noted_by)
      VALUES ($1,$2,$3,'أموكسيسيلين','طفح جلدي وتورم (حساسية بنسلين)','severe',$4)`,
-    [crypto.randomUUID(), facilityId, patientIds[0], userIds['physician:dr.ahmed@demo.hms']],
+    [nextSeedUuid(), facilityId, patientIds[0], userIds['physician:dr.ahmed@demo.hms']],
   );
   await db.query(
     `INSERT INTO patient_conditions (id, facility_id, patient_id, icd10_code, description, onset_date, noted_by)
      VALUES ($1,$2,$3,'E11.9','داء السكري من النوع الثاني',$4,$5)`,
-    [crypto.randomUUID(), facilityId, patientIds[0], '2019-05-01', userIds['physician:dr.ahmed@demo.hms']],
+    [nextSeedUuid(), facilityId, patientIds[0], '2019-05-01', userIds['physician:dr.ahmed@demo.hms']],
   );
   await db.query(
     `INSERT INTO insurance_policies (id, facility_id, patient_id, payer_name, policy_no_enc, policy_no_hash, coverage_pct, valid_from)
      VALUES ($1,$2,$3,'شركة تأمين تجريبية',$4,$5,80,current_date - interval '90 days')`,
-    [crypto.randomUUID(), facilityId, patientIds[0], 'placeholder', blindIndex('POL-0001')],
+    [nextSeedUuid(), facilityId, patientIds[0], 'placeholder', blindIndex('POL-0001')],
   );
 
   // --------------------------------------------------------------- Catalogue --
@@ -369,7 +379,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   ];
   const drugIds: Record<string, string> = {};
   for (const [code, ar, en, form, strength, price, controlled] of drugs) {
-    const id = crypto.randomUUID();
+    const id = nextSeedUuid();
     drugIds[code] = id;
     // Controlled medicines are high-alert: nursing requires a second witness.
     await db.query(
@@ -379,30 +389,30 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     await db.query(
       `INSERT INTO drug_batches (id, facility_id, drug_id, batch_no, expiry_date, qty_on_hand, unit_cost)
        VALUES ($1,$2,$3,$4,current_date + interval '400 days',$5,$6)`,
-      [crypto.randomUUID(), facilityId, id, `B-${code.slice(4)}-001`, 500, price * 0.7],
+      [nextSeedUuid(), facilityId, id, `B-${code.slice(4)}-001`, 500, price * 0.7],
     );
   }
   await db.query(
     `INSERT INTO drug_interactions (id, drug_a_code, drug_b_code, severity, description)
      VALUES ($1,'DRG-WARF','DRG-ASP','major','زيادة خطر النزف عند الجمع بين الوارفارين والأسبرين')`,
-    [crypto.randomUUID()],
+    [nextSeedUuid()],
   );
 
   // -------------------------------------------------------------- Beds/wards --
-  const wardId = crypto.randomUUID();
+  const wardId = nextSeedUuid();
   await db.query(`INSERT INTO wards (id, facility_id, name_ar, name_en, ward_type) VALUES ($1,$2,'جناح عام','General Ward','general')`, [wardId, facilityId]);
-  const icuId = crypto.randomUUID();
+  const icuId = nextSeedUuid();
   await db.query(`INSERT INTO wards (id, facility_id, name_ar, name_en, ward_type) VALUES ($1,$2,'العناية المركزة','ICU','icu')`, [icuId, facilityId]);
   for (const [ward, label, count] of [[wardId, 'G', 4], [icuId, 'ICU', 4]] as const) {
     for (let i = 1; i <= count; i++) {
-      const roomId = crypto.randomUUID();
+      const roomId = nextSeedUuid();
       await db.query(`INSERT INTO rooms (id, facility_id, ward_id, room_no, room_type) VALUES ($1,$2,$3,$4,'standard')`, [roomId, facilityId, ward, `${label}-0${i}`]);
-      await db.query(`INSERT INTO beds (id, facility_id, ward_id, room_id, bed_no) VALUES ($1,$2,$3,$4,'A')`, [crypto.randomUUID(), facilityId, ward, roomId]);
+      await db.query(`INSERT INTO beds (id, facility_id, ward_id, room_id, bed_no) VALUES ($1,$2,$3,$4,'A')`, [nextSeedUuid(), facilityId, ward, roomId]);
     }
   }
 
   // ------------------------------------------------------------ Appointments --
-  const appointmentId = crypto.randomUUID();
+  const appointmentId = nextSeedUuid();
   await db.query(
     `INSERT INTO appointments (id, facility_id, appointment_no, patient_id, department_id, doctor_id, scheduled_at, reason, created_by)
      VALUES ($1,$2,'APT-000001',$3,$4,$5, date_trunc('hour', now()) + interval '1 hour', 'متابعة ضغط وسكري',$6)`,
@@ -411,7 +421,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
   await db.query(
     `INSERT INTO appointments (id, facility_id, appointment_no, patient_id, department_id, doctor_id, scheduled_at, reason, created_by)
      VALUES ($1,$2,'APT-000002',$3,$4,$5, now() - interval '2 days', 'مراجعة نتائج',$6)`,
-    [crypto.randomUUID(), facilityId, patientIds[2], deptIds.GEN, userIds['physician:dr.ahmed@demo.hms'], userIds['receptionist:reception@demo.hms']],
+    [nextSeedUuid(), facilityId, patientIds[2], deptIds.GEN, userIds['physician:dr.ahmed@demo.hms'], userIds['receptionist:reception@demo.hms']],
   );
 
   // ---------------------------------------------- Historical completed journey --
@@ -427,7 +437,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     const accountant = uid('accountant@demo.hms');
     const patientId = patientIds[0];
 
-    const encounterId = crypto.randomUUID();
+    const encounterId = nextSeedUuid();
     await db.query(
       `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
          status, chief_complaint, started_at, closed_at, disposition, created_by)
@@ -439,7 +449,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       `INSERT INTO vitals (id, facility_id, patient_id, encounter_id, recorded_by, recorded_at, temperature_c,
          heart_rate, systolic_bp, diastolic_bp, spo2, weight_kg)
        VALUES ($1,$2,$3,$4,$5, now() - interval '10 days', 37.1, 88, 128, 82, 98, 84.5)`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, doctor],
+      [nextSeedUuid(), facilityId, patientId, encounterId, doctor],
     );
     await db.query(
       `INSERT INTO clinical_notes (id, facility_id, patient_id, encounter_id, note_type, subjective, objective,
@@ -447,16 +457,16 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
        VALUES ($1,$2,$3,$4,'consultation','عطش وتبول متكرر خلال الأسبوعين الماضيين',
          'ضغط 128/82، حرارة 37.1، وزن 84.5','ارتفاع سكر الدم على خلفية داء سكري من النوع الثاني',
          'تعديل جرعة الميتفورمين ومتابعة بعد أسبوعين', $5, now() - interval '10 days')`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, doctor],
+      [nextSeedUuid(), facilityId, patientId, encounterId, doctor],
     );
     await db.query(
       `INSERT INTO diagnoses (id, facility_id, patient_id, encounter_id, icd10_code, description, diagnosis_type, recorded_by)
        VALUES ($1,$2,$3,$4,'E11.9','داء السكري من النوع الثاني','primary',$5)`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, doctor],
+      [nextSeedUuid(), facilityId, patientId, encounterId, doctor],
     );
 
     // Invoice exists before any charge line is attached (FK integrity).
-    const invoiceId = crypto.randomUUID();
+    const invoiceId = nextSeedUuid();
     await db.query(
       `INSERT INTO invoices (id, facility_id, invoice_no, patient_id, encounter_id, status, created_by, created_at)
        VALUES ($1,$2,'INV-000001',$3,$4,'open',$5, now() - interval '10 days')`,
@@ -470,11 +480,11 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
         `INSERT INTO invoice_items (id, facility_id, invoice_id, category, description, reference_type, reference_id,
            quantity, unit_price, line_total, created_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now() - interval '10 days')`,
-        [crypto.randomUUID(), facilityId, invoiceId, category, description, refType, refId, qty, price, lineTotal],
+        [nextSeedUuid(), facilityId, invoiceId, category, description, refType, refId, qty, price, lineTotal],
       );
     };
 
-    const labOrderId = crypto.randomUUID();
+    const labOrderId = nextSeedUuid();
     await db.query(
       `INSERT INTO lab_orders (id, facility_id, order_no, patient_id, encounter_id, ordered_by, ordered_at, priority, status)
        VALUES ($1,$2,'LAB-000001',$3,$4,$5, now() - interval '10 days', 'routine', 'completed')`,
@@ -485,8 +495,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       ['2345-7', 168, 'high', 20, 'mg/dL'],
     ];
     for (const [code, value, flag, price, unit] of labLines) {
-      const itemId = crypto.randomUUID();
-      const resultId = crypto.randomUUID();
+      const itemId = nextSeedUuid();
+      const resultId = nextSeedUuid();
       await db.query(
         `INSERT INTO lab_order_items (id, facility_id, order_id, test_code, status, specimen_barcode, collected_by,
            collected_at, verified_by, verified_at, price)
@@ -507,8 +517,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       `SELECT id FROM drug_batches WHERE facility_id = $1 AND drug_id = $2 ORDER BY expiry_date LIMIT 1`,
       [facilityId, metformin],
     );
-    const prescriptionId = crypto.randomUUID();
-    const rxItemId = crypto.randomUUID();
+    const prescriptionId = nextSeedUuid();
+    const rxItemId = nextSeedUuid();
     await db.query(
       `INSERT INTO prescriptions (id, facility_id, prescription_no, patient_id, encounter_id, prescribed_by,
          prescribed_at, status)
@@ -525,7 +535,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       await db.query(
         `INSERT INTO dispenses (id, facility_id, prescription_item_id, drug_batch_id, quantity, dispensed_by, dispensed_at)
          VALUES ($1,$2,$3,$4,60,$5, now() - interval '10 days')`,
-        [crypto.randomUUID(), facilityId, rxItemId, batch.rows[0].id, pharmacist],
+        [nextSeedUuid(), facilityId, rxItemId, batch.rows[0].id, pharmacist],
       );
       await db.query(`UPDATE drug_batches SET qty_on_hand = qty_on_hand - 60 WHERE id = $1`, [batch.rows[0].id]);
       await db.query(
@@ -544,7 +554,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     await db.query(
       `INSERT INTO payments (id, facility_id, invoice_id, amount, method, received_by, received_at)
        VALUES ($1,$2,$3,$4,'card',$5, now() - interval '10 days')`,
-      [crypto.randomUUID(), facilityId, invoiceId, subtotal, accountant],
+      [nextSeedUuid(), facilityId, invoiceId, subtotal, accountant],
     );
   }
 
@@ -553,7 +563,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     const doctor = Object.entries(userIds).find(([k]) => k.endsWith(':dr.sara@demo.hms'))![1];
     const erDept = deptIds.ER;
     const patientId = patientIds[2];
-    const encounterId = crypto.randomUUID();
+    const encounterId = nextSeedUuid();
     await db.query(
       `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
          status, chief_complaint, triage_level, started_at, created_by)
@@ -564,12 +574,12 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       `INSERT INTO vitals (id, facility_id, patient_id, encounter_id, recorded_by, recorded_at, heart_rate,
          systolic_bp, diastolic_bp, spo2, temperature_c)
        VALUES ($1,$2,$3,$4,$5, now() - interval '35 minutes', 104, 148, 92, 95, 37.2)`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, doctor],
+      [nextSeedUuid(), facilityId, patientId, encounterId, doctor],
     );
     await db.query(
       `INSERT INTO triage_records (id, facility_id, patient_id, encounter_id, level, chief_complaint, arrived_at, triaged_by)
        VALUES ($1,$2,$3,$4,2,'ألم صدري حاد يمتد للذراع', now() - interval '35 minutes', $5)`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, doctor],
+      [nextSeedUuid(), facilityId, patientId, encounterId, doctor],
     );
   }
 
@@ -590,14 +600,14 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     );
     const bedId = bed.rows[0]?.id ?? null;
 
-    const encounterId = crypto.randomUUID();
+    const encounterId = nextSeedUuid();
     await db.query(
       `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
          status, chief_complaint, started_at, created_by)
        VALUES ($1,$2,'ENC-000003',$3,'inpatient',$4,$5,'open','متابعة قصور قلب ومضاد تخثر', now() - interval '2 days', $5)`,
       [encounterId, facilityId, patientId, deptIds.INP, doctor],
     );
-    const admissionId = crypto.randomUUID();
+    const admissionId = nextSeedUuid();
     await db.query(
       `INSERT INTO admissions (id, facility_id, admission_no, patient_id, encounter_id, bed_id, attending_doctor_id,
          admitted_by, admitted_at, status)
@@ -610,10 +620,10 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       `INSERT INTO vitals (id, facility_id, patient_id, encounter_id, recorded_by, recorded_at, heart_rate,
          systolic_bp, diastolic_bp, spo2, temperature_c, pain_score)
        VALUES ($1,$2,$3,$4,$5, now() - interval '3 hours', 88, 132, 78, 94, 37.6, 4)`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, nurse1],
+      [nextSeedUuid(), facilityId, patientId, encounterId, nurse1],
     );
 
-    const prescriptionId = crypto.randomUUID();
+    const prescriptionId = nextSeedUuid();
     await db.query(
       `INSERT INTO prescriptions (id, facility_id, prescription_no, patient_id, encounter_id, prescribed_by,
          prescribed_at, status)
@@ -627,7 +637,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ];
     const itemIds: string[] = [];
     for (const [code, dose, route, frequency, intervalHours, price] of items) {
-      const itemId = crypto.randomUUID();
+      const itemId = nextSeedUuid();
       itemIds.push(itemId);
       await db.query(
         `INSERT INTO prescription_items (id, facility_id, prescription_id, drug_id, dose, route, frequency,
@@ -643,7 +653,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
         await db.query(
           `INSERT INTO dispenses (id, facility_id, prescription_item_id, drug_batch_id, quantity, dispensed_by, dispensed_at)
            VALUES ($1,$2,$3,$4,28,$5, now() - interval '2 days')`,
-          [crypto.randomUUID(), facilityId, itemId, batch.rows[0].id, userIds['pharmacist:pharmacist@demo.hms']],
+          [nextSeedUuid(), facilityId, itemId, batch.rows[0].id, userIds['pharmacist:pharmacist@demo.hms']],
         );
         await db.query(`UPDATE drug_batches SET qty_on_hand = qty_on_hand - 28 WHERE id = $1`, [batch.rows[0].id]);
       }
@@ -656,7 +666,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
          allergy_checked, administered_by)
        VALUES ($1,$2,$3,$4,$5,$6, now() - interval '8 hours 45 minutes', now() - interval '8 hours 45 minutes',
                'given','500mg','فموي',true,true,$7)`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, admissionId, itemIds[0], nurse1],
+      [nextSeedUuid(), facilityId, patientId, encounterId, admissionId, itemIds[0], nurse1],
     );
     // Warfarin (high alert) was given 20h ago with a second nurse as witness.
     await db.query(
@@ -665,10 +675,10 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
          allergy_checked, administered_by, witness_by)
        VALUES ($1,$2,$3,$4,$5,$6, now() - interval '20 hours', now() - interval '20 hours',
                'given','5mg','فموي',true,true,$7,$8)`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, admissionId, itemIds[1], nurse1, nurse2],
+      [nextSeedUuid(), facilityId, patientId, encounterId, admissionId, itemIds[1], nurse1, nurse2],
     );
 
-    const planId = crypto.randomUUID();
+    const planId = nextSeedUuid();
     await db.query(
       `INSERT INTO care_plans (id, facility_id, patient_id, encounter_id, admission_id, title, nursing_diagnosis,
          goals, created_by, created_at)
@@ -685,7 +695,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       await db.query(
         `INSERT INTO care_plan_tasks (id, facility_id, care_plan_id, description, due_at, frequency_hours)
          VALUES ($1,$2,$3,$4, ${dueAt}, $5)`,
-        [crypto.randomUUID(), facilityId, planId, description, frequencyHours],
+        [nextSeedUuid(), facilityId, planId, description, frequencyHours],
       );
     }
 
@@ -696,7 +706,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
                'قصور قلب مزمن، بدأ وارفارين قبل يومين، وظائف الكلى آخر تحليل طبيعية',
                'ضغط 132/78 ونبض 88 وتشبع 94%، لا علامات نزف ظاهرة',
                'متابعة جرعة الوارفارين مع شاهد، وزن صباحي، ومراجعة INR قبل الخروج', $6,$7, now() - interval '6 hours')`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, admissionId, nurse1, nurse2],
+      [nextSeedUuid(), facilityId, patientId, encounterId, admissionId, nurse1, nurse2],
     );
   }
 
@@ -707,7 +717,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     const surgeon = userIds['surgeon:surgeon@demo.hms'];
     const anesthetist = userIds['anesthesiologist:anesthesia@demo.hms'];
     const patientId = patientIds[4];
-    const encounterId = crypto.randomUUID();
+    const encounterId = nextSeedUuid();
     await db.query(
       `INSERT INTO encounters (id, facility_id, encounter_no, patient_id, encounter_type, department_id, doctor_id,
          status, chief_complaint, started_at, created_by)
@@ -720,7 +730,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
          estimated_minutes, notes, created_by)
        VALUES ($1,$2,'SUR-000001',$3,$4,$5,'استئصال المرارة بالمنظار','0FT44ZZ','none','elective','general',
                $6,$7, now() + interval '2 hours', 90, 'مريض صائم منذ منتصف الليل، تحاليل التخثر طبيعية', $6)`,
-      [crypto.randomUUID(), facilityId, patientId, encounterId, theatreIds['OR-1'], surgeon, anesthetist],
+      [nextSeedUuid(), facilityId, patientId, encounterId, theatreIds['OR-1'], surgeon, anesthetist],
     );
   }
 
@@ -736,7 +746,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     );
     const admission = adm.rows[0];
     if (admission) {
-      const stayId = crypto.randomUUID();
+      const stayId = nextSeedUuid();
       await db.query(
         `INSERT INTO icu_stays (id, facility_id, stay_no, admission_id, patient_id, encounter_id, bed_id,
            intensivist_id, opened_by, opened_at)
@@ -749,19 +759,19 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
          VALUES
            ($1,$2,$3, now() - interval '4 hours', 88, 132, 78, 22, 94, 37.6, 15, -1, 380, 118, 'مستقر على أكسجين عالي التدفق', $4),
            ($5,$2,$3, now() - interval '1 hour', 92, 128, 74, 24, 92, 37.8, 15, -1, 260, 126, 'زيادة بسيطة في معدل التنفس، لا ضيق واضح', $4)`,
-        [crypto.randomUUID(), facilityId, stayId, icuNurse, crypto.randomUUID()],
+        [nextSeedUuid(), facilityId, stayId, icuNurse, nextSeedUuid()],
       );
       await db.query(
         `INSERT INTO icu_ventilator_settings (id, facility_id, stay_id, mode, fio2_pct, peep_cmh2o, set_rate, reason, recorded_by, recorded_at)
          VALUES ($1,$2,$3,'hfnc',40,5,24,'دعم تنفسي بعد تدهور تشبع الأكسجين', $4, now() - interval '2 days')`,
-        [crypto.randomUUID(), facilityId, stayId, intensivist],
+        [nextSeedUuid(), facilityId, stayId, intensivist],
       );
       await db.query(
         `INSERT INTO icu_daily_goals (id, facility_id, stay_id, goal_date, sedation_target, head_of_bed_elevated,
            vap_bundle, dvt_prophylaxis, stress_ulcer_prophylaxis, nutrition_plan, early_mobility, notes, created_by)
          VALUES ($1,$2,$3, current_date, true, true, true, true, true, true, false,
                  'مريض بلا تنبيب: الاستمرار على HFNC وتقييم الفطام بعد استقرار التشبع', $4)`,
-        [crypto.randomUUID(), facilityId, stayId, icuNurse],
+        [nextSeedUuid(), facilityId, stayId, icuNurse],
       );
       const sofa = {
         respiration: 2, coagulation: 0, liver: 0, cardiovascular: 0, cns: 0, renal: 1,
@@ -773,7 +783,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       await db.query(
         `INSERT INTO icu_scores (id, facility_id, stay_id, kind, components, total, recorded_by, recorded_at)
          VALUES ($1,$2,$3,'sofa',$4,3,$5, now() - interval '1 hour')`,
-        [crypto.randomUUID(), facilityId, stayId, JSON.stringify(sofa), intensivist],
+        [nextSeedUuid(), facilityId, stayId, JSON.stringify(sofa), intensivist],
       );
     }
   }
@@ -791,7 +801,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     );
     const admission = adm.rows[0];
     if (admission) {
-      const screeningId = crypto.randomUUID();
+      const screeningId = nextSeedUuid();
       const bmi = 23.2;
       await db.query(
         `INSERT INTO nutrition_screenings (id, facility_id, patient_id, admission_id, encounter_id, screening_date,
@@ -803,7 +813,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
         [screeningId, facilityId, admission.patient_id, admission.id, admission.encounter_id, bmi, nurse],
       );
 
-      const assessmentId = crypto.randomUUID();
+      const assessmentId = nextSeedUuid();
       await db.query(
         `INSERT INTO nutrition_assessments (id, facility_id, patient_id, admission_id, screening_id,
            weight_kg, height_cm, bmi, ideal_weight_kg, energy_target_kcal, protein_target_g, fluid_limit_ml,
@@ -815,7 +825,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
         [assessmentId, facilityId, admission.patient_id, admission.id, screeningId, bmi, dietitian],
       );
 
-      const dietOrderId = crypto.randomUUID();
+      const dietOrderId = nextSeedUuid();
       await db.query(
         `INSERT INTO nutrition_diet_orders (id, facility_id, patient_id, admission_id, encounter_id, order_no,
            assessment_id, diet_type, texture, restrictions, energy_target_kcal, protein_target_g, fluid_limit_ml,
@@ -829,7 +839,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       const share: [string, number, number][] = [['breakfast', 25, 0], ['lunch', 35, 1], ['dinner', 30, 2], ['snack', 10, 3]];
       let trayNo = 1;
       for (const [meal, pct, idx] of share) {
-        const trayId = crypto.randomUUID();
+        const trayId = nextSeedUuid();
         const delivered = idx === 0;
         await db.query(
           `INSERT INTO nutrition_trays (id, facility_id, diet_order_id, patient_id, admission_id, tray_no, tray_date,
@@ -850,7 +860,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
         await db.query(
           `INSERT INTO patient_allergies (id, facility_id, patient_id, allergen, reaction, severity, noted_by)
            VALUES ($1,$2,$3,'حليب البقر','إسهال وغازات بعد تناول الحليب','moderate',$4)`,
-          [crypto.randomUUID(), facilityId, patientIds[2], userIds['physician:dr.ahmed@demo.hms']],
+          [nextSeedUuid(), facilityId, patientIds[2], userIds['physician:dr.ahmed@demo.hms']],
         );
       }
     }
@@ -874,7 +884,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     const componentDays: Record<string, number> = { rbc: 42, ffp: 365, platelets: 5, cryo: 365 };
     let unitSeq = 1;
     for (const d of donorPlan) {
-      const donorId = crypto.randomUUID();
+      const donorId = nextSeedUuid();
       await db.query(
         `INSERT INTO blood_donors (id, facility_id, donor_no, blood_type, hemoglobin, created_by, donated_at)
          VALUES ($1,$2,$3,$4,14.2,$5, now() - interval '3 days')`,
@@ -887,7 +897,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
                collected_at, expires_at, status)
              VALUES ($1,$2,$3,$4,$5,$6,$7, now() - interval '3 days',
                      now() - interval '3 days' + make_interval(days => $8::int), 'available')`,
-            [crypto.randomUUID(), facilityId, `BGU-${String(unitSeq++).padStart(6, '0')}`, donorId,
+            [nextSeedUuid(), facilityId, `BGU-${String(unitSeq++).padStart(6, '0')}`, donorId,
               component, d.type, component === 'rbc' ? 450 : 250, componentDays[component]],
           );
         }
@@ -903,7 +913,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
            units_requested, urgency, indication, hb_value, requested_by, requested_at)
          VALUES ($1,$2,'BLR-000001',$3,$4,'rbc',2,'urgent',
                  'هبوط الهيموغلوبين إلى 7.1 مع أعراض فقر دم وقصور قلب', 7.1, $5, now() - interval '2 hours')`,
-        [crypto.randomUUID(), facilityId, icu.rows[0].patient_id, icu.rows[0].encounter_id,
+        [nextSeedUuid(), facilityId, icu.rows[0].patient_id, icu.rows[0].encounter_id,
           userIds['intensivist:intensivist@demo.hms']],
       );
     }
@@ -931,7 +941,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
     ];
     const setIds: Record<string, string> = {};
     for (const [code, nameAr, category, count, dept] of setDefs) {
-      const id = crypto.randomUUID();
+      const id = nextSeedUuid();
       setIds[code] = id;
       await db.query(
         `INSERT INTO cssd_instrument_sets (id, facility_id, code, name_ar, category, instrument_count, department, created_by)
@@ -944,11 +954,11 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       id: string; no: string; autoclave: string; cycle: number; packs: number;
       status: string; chemical: string; biological: string; agoHours: number; approved?: boolean;
     }[] = [
-      { id: crypto.randomUUID(), no: 'CSL-000001', autoclave: 'STM-01', cycle: 5, packs: 2, status: 'approved',
+      { id: nextSeedUuid(), no: 'CSL-000001', autoclave: 'STM-01', cycle: 5, packs: 2, status: 'approved',
         chemical: 'pass', biological: 'pass', agoHours: 52, approved: true },
-      { id: crypto.randomUUID(), no: 'CSL-000002', autoclave: 'STM-02', cycle: 12, packs: 1, status: 'running',
+      { id: nextSeedUuid(), no: 'CSL-000002', autoclave: 'STM-02', cycle: 12, packs: 1, status: 'running',
         chemical: 'pass', biological: 'pending', agoHours: 2 },
-      { id: crypto.randomUUID(), no: 'CSL-000003', autoclave: 'STM-01', cycle: 6, packs: 1, status: 'failed',
+      { id: nextSeedUuid(), no: 'CSL-000003', autoclave: 'STM-01', cycle: 6, packs: 1, status: 'failed',
         chemical: 'pass', biological: 'fail', agoHours: 26 },
     ];
     for (const l of loadDefs) {
@@ -988,7 +998,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
       { no: 'CSS-000007', set: 'CSS-SET-07', status: 'quarantined', packaging: 'wrap', cycle: 1, load: load3 },
     ];
     for (const pk of packDefs) {
-      const id = crypto.randomUUID();
+      const id = nextSeedUuid();
       const released = pk.releasedHours != null ? new Date(Date.now() - pk.releasedHours * 3600_000).toISOString() : null;
       await db.query(
         `INSERT INTO cssd_packs (id, facility_id, pack_no, set_id, load_id, status, packaging, cycle_count,
@@ -1023,7 +1033,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
            started_at, ordered_by)
          VALUES ($1,$2,$3,$4,'contact','Clostridioides difficile (مشتبه)',
                  'إسهال مائي منذ ٢٤ ساعة بعد مضادات حيوية واسعة الطيف، عينة toxin قيد الفحص', now() - interval '20 hours', $5)`,
-        [crypto.randomUUID(), facilityId, icuAdmission.patient_id, icuAdmission.id, ipc],
+        [nextSeedUuid(), facilityId, icuAdmission.patient_id, icuAdmission.id, ipc],
       );
       await db.query(
         `INSERT INTO infection_isolations (id, facility_id, patient_id, admission_id, precaution, organism, reason,
@@ -1031,7 +1041,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
          VALUES ($1,$2,$3,$4,'droplet','MRSA',
                  'نتيجة مسحة أنفية إيجابية عند الدخول، مع جروح مفتوحة', now() - interval '12 days', $5,
                  now() - interval '9 days', $5, 'تكررت المسحة سلبياً مرتين متتاليتين وأُوقف العزل حسب السياسة')`,
-        [crypto.randomUUID(), facilityId, icuAdmission.patient_id, icuAdmission.id, ipc],
+        [nextSeedUuid(), facilityId, icuAdmission.patient_id, icuAdmission.id, ipc],
       );
 
       const caseDefs: [string, string, string, string][] = [
@@ -1046,7 +1056,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
           `INSERT INTO infection_cases (id, facility_id, patient_id, admission_id, case_type, organism, onset_date,
              device_days, status, reported_by, reported_at, reviewed_by, reviewed_at, review_note)
            VALUES ($1,$2,$3,$4,$5,$6, current_date - $7::int, 9, $8, $9, $10, $11, $12, $13)`,
-          [crypto.randomUUID(), facilityId, icuAdmission.patient_id, icuAdmission.id, caseType,
+          [nextSeedUuid(), facilityId, icuAdmission.patient_id, icuAdmission.id, caseType,
             organism || null, onsetOffset, status, userIds['nurse:nurse@demo.hms'], reportedAt,
             status === 'suspected' ? null : ipc,
             status === 'suspected' ? null : new Date(Date.now() - (onsetOffset - 2) * 86_400_000).toISOString(),
@@ -1065,7 +1075,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
             `INSERT INTO hand_hygiene_audits (id, facility_id, unit, moment, opportunities, compliant,
                observed_role, observed_date, observer_id)
              VALUES ($1,$2,$3,$4,$5,$6,$7, current_date - $8::int, $9)`,
-            [crypto.randomUUID(), facilityId, unit,
+            [nextSeedUuid(), facilityId, unit,
               ['before_patient', 'before_aseptic', 'after_body_fluid', 'after_patient', 'after_surroundings'][i % 5],
               opportunities, compliant, ['nurse', 'physician', 'tech'][i % 3], day, ipc],
           );
@@ -1097,7 +1107,7 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
 
       const empIds: Record<string, string> = {};
       for (const [empNo, uid, nameAr, nameEn, cat, title, deptId, empType, hireDate, nid, phone] of empDefs) {
-        const eid = crypto.randomUUID();
+        const eid = nextSeedUuid();
         empIds[empNo] = eid;
         const nidEnc = encryptField(nid, `hr_employees.national_id_enc:${eid}`);
         const phoneEnc = encryptField(phone, `hr_employees.phone_enc:${eid}`);
@@ -1123,12 +1133,12 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
            ($10,$2,$11,'scfhs','SCFHS-23-6520','الهيئة السعودية للتخصصات الصحية', current_date - 200, current_date + 500, 'verified', $8, $9, now() - interval '195 days', 'تصنيف صيدلي إكلينيكي'),
            ($12,$2,$3,'acls','ACLS-26-1099','جمعية القلب السعودية', current_date - 10, current_date + 720, 'pending_verification', $8, NULL, NULL, 'بانتظار مطابقة شهادة ACLS المحدثة من مشرف التراخيص')`,
         [
-          crypto.randomUUID(), facilityId, empIds['EMP-000001'],
-          crypto.randomUUID(), empIds['EMP-000002'],
-          crypto.randomUUID(), empIds['EMP-000003'],
+          nextSeedUuid(), facilityId, empIds['EMP-000001'],
+          nextSeedUuid(), empIds['EMP-000002'],
+          nextSeedUuid(), empIds['EMP-000003'],
           hr1, hr2,
-          crypto.randomUUID(), empIds['EMP-000004'],
-          crypto.randomUUID(),
+          nextSeedUuid(), empIds['EMP-000004'],
+          nextSeedUuid(),
         ],
       );
 
@@ -1140,9 +1150,9 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
            ($5,$2,$6,$7, current_date, 'morning', 'scheduled', NULL, $11, 'جدول العمليات الصباحي'),
            ($8,$2,$9,$10, current_date, 'evening', 'scheduled', NULL, $11, 'مناوبة التمريض المسائية')`,
         [
-          crypto.randomUUID(), facilityId, empIds['EMP-000001'], deptIds.GEN,
-          crypto.randomUUID(), empIds['EMP-000002'], deptIds.OR,
-          crypto.randomUUID(), empIds['EMP-000003'], deptIds.INP,
+          nextSeedUuid(), facilityId, empIds['EMP-000001'], deptIds.GEN,
+          nextSeedUuid(), empIds['EMP-000002'], deptIds.OR,
+          nextSeedUuid(), empIds['EMP-000003'], deptIds.INP,
           hr1,
         ],
       );
@@ -1156,8 +1166,8 @@ export async function seedDatabase(opts: { force?: boolean } = {}) {
            ($1,$2,'LVR-000001',$3,'study', current_date + 14, current_date + 16, 3, 'حضور المؤتمر السعودي للباطنية', 'approved', $4, $5, now() - interval '1 day', 'معتمد مع تغطية العيادة'),
            ($6,$2,'LVR-000002',$7,'annual', current_date + 7, current_date + 11, 5, 'إجازة سنوية مستحقة وفق الجدول', 'pending', $8, NULL, NULL, NULL)`,
         [
-          crypto.randomUUID(), facilityId, empIds['EMP-000001'], drAhmed, hr2,
-          crypto.randomUUID(), empIds['EMP-000003'], nurseUser,
+          nextSeedUuid(), facilityId, empIds['EMP-000001'], drAhmed, hr2,
+          nextSeedUuid(), empIds['EMP-000003'], nurseUser,
         ],
       );
     }

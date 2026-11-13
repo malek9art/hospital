@@ -16,15 +16,14 @@ async function bootstrap(): Promise<FastifyInstance> {
   const cfg = config();
   const db = await getDb();
   const check = await db.query<{ t: string | null }>(`SELECT to_regclass('public.schema_migrations') AS t`);
-  if (!check.rows[0]?.t) {
-    if (!cfg.AUTO_BOOTSTRAP) {
-      throw new Error('Database is not migrated. Run "npm run db:migrate" before starting.');
-    }
+  if (cfg.AUTO_BOOTSTRAP) {
     const started = Date.now();
     await runMigrations(db);
     if (cfg.SEED_DEMO) await seedDatabase();
     // eslint-disable-next-line no-console
-    console.log(`[serverless] bootstrapped database in ${Date.now() - started}ms`);
+    console.log(`[serverless] ensured schema & seed (${cfg.DB_MODE}) in ${Date.now() - started}ms`);
+  } else if (!check.rows[0]?.t) {
+    throw new Error('Database is not migrated. Run "npm run db:migrate" before starting.');
   }
   const app = await buildServer({ serveWeb: false, logger: cfg.NODE_ENV === 'production' });
   await app.ready();

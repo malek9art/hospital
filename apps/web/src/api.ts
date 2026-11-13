@@ -15,6 +15,7 @@ export type Me = {
   facilities: { id: string; name_ar: string; name_en?: string; code: string }[];
   activeFacilityId: string;
   mfaEnabled: boolean;
+  mfaEnforced?: boolean;
   mfaVerified: boolean;
   csrfToken: string;
   sessionId?: string;
@@ -55,13 +56,20 @@ function normalizeHeaders(init?: HeadersInit): Record<string, string> {
   return out;
 }
 
-export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+async function rawFetch<T>(path: string, init: RequestInit, allowCsrfRetry: boolean): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
   const headers = normalizeHeaders(init.headers);
   if (init.body && !headers['content-type']) headers['content-type'] = 'application/json';
   if (csrf && method !== 'GET' && method !== 'HEAD') headers['x-csrf-token'] = csrf;
 
-  const res = await fetch(path, { ...init, headers, credentials: 'same-origin' });
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers, credentials: 'same-origin' });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new ApiError(0, 'network_error', 'تعذّر الاتصال بالخادم — تحقق من اتصال الشبكة وحاول مجددًا');
+  }
+
   const text = await res.text();
   let data: Record<string, any> = {};
   if (text) {
@@ -76,16 +84,34 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   }
   if (!res.ok) {
     const err = data?.error ?? {};
+    // Transparently recover once if in-memory CSRF token drifted across tabs/reloads.
+    if (
+      allowCsrfRetry &&
+      res.status === 403 &&
+      err.code === 'csrf_failed' &&
+      path !== '/api/auth/login' &&
+      path !== '/api/auth/logout'
+    ) {
+      await me();
+      return rawFetch<T>(path, init, false);
+    }
     throw new ApiError(res.status, err.code ?? 'error', err.message ?? `فشل الطلب (${res.status})`, err.details ?? null);
   }
   return data as T;
 }
 
+export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+  return rawFetch<T>(path, init, true);
+}
+
 export async function login(email: string, password: string) {
-  const res = await api<{ csrfToken: string; mfaRequired: boolean }>('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
+  const res = await api<{ csrfToken: string; mfaRequired: boolean; mfaEnrollmentRequired?: boolean }>(
+    '/api/auth/login',
+    {
+      method: 'POST',
+      body: JSON.stringify({ email: email.trim(), password }),
+    },
+  );
   csrf = res.csrfToken;
   return res;
 }

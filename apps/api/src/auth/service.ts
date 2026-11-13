@@ -23,11 +23,75 @@ export interface LoginResult {
   mfaEnrollmentRequired: boolean;
 }
 
+export interface SessionEnvelopePayload {
+  v: 1;
+  sid: string;
+  sec: string;
+  uid: string;
+  fid: string;
+  csrf: string;
+  mfa: boolean;
+  exp: number;
+}
+
+export function encodeSessionCookie(payload: SessionEnvelopePayload): string {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', config().sessionSecret)
+    .update(`hms-sess-v1:${body}`)
+    .digest('base64url');
+  return `s1.${body}.${sig}`;
+}
+
+export function decodeSessionCookie(
+  rawToken: string | undefined,
+): { secretForHash: string; envelope: SessionEnvelopePayload | null } | null {
+  if (!rawToken) return null;
+  if (!rawToken.startsWith('s1.')) {
+    return { secretForHash: rawToken, envelope: null };
+  }
+  const parts = rawToken.split('.');
+  if (parts.length !== 3) return null;
+  const [, body, sig] = parts;
+  if (!body || !sig) return null;
+  const expectedSig = crypto
+    .createHmac('sha256', config().sessionSecret)
+    .update(`hms-sess-v1:${body}`)
+    .digest('base64url');
+  if (!timingSafeEqual(expectedSig, sig)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Partial<SessionEnvelopePayload>;
+    if (
+      parsed.v !== 1 ||
+      typeof parsed.sid !== 'string' ||
+      typeof parsed.sec !== 'string' ||
+      typeof parsed.uid !== 'string' ||
+      typeof parsed.fid !== 'string' ||
+      typeof parsed.csrf !== 'string' ||
+      typeof parsed.mfa !== 'boolean' ||
+      typeof parsed.exp !== 'number'
+    ) {
+      return null;
+    }
+    return { secretForHash: parsed.sec, envelope: parsed as SessionEnvelopePayload };
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeAuthDigits(input: string): string {
+  return input
+    .replace(/[\u0660-\u0669]/g, (c) => String(c.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, (c) => String(c.charCodeAt(0) - 0x06f0))
+    .replace(/[\s-]/g, '');
+}
+
 function sessionTtl() {
   const cfg = config();
   const idle = new Date(Date.now() + cfg.SESSION_IDLE_MINUTES * 60_000).toISOString();
-  const absolute = new Date(Date.now() + cfg.SESSION_ABSOLUTE_HOURS * 3_600_000).toISOString();
-  return { idle, absolute };
+  const absoluteMs = Date.now() + cfg.SESSION_ABSOLUTE_HOURS * 3_600_000;
+  const absolute = new Date(absoluteMs).toISOString();
+  return { idle, absolute, absoluteMs };
 }
 
 export async function createSession(opts: {
@@ -38,16 +102,26 @@ export async function createSession(opts: {
   userAgent?: string;
 }): Promise<{ token: string; csrfToken: string; sessionId: string }> {
   const db = await getDb();
-  const token = randomToken(32);
+  const secretPart = randomToken(32);
   const csrfToken = randomToken(24);
   const sessionId = crypto.randomUUID();
-  const { idle, absolute } = sessionTtl();
+  const { idle, absolute, absoluteMs } = sessionTtl();
   await db.query(
     `INSERT INTO sessions (id, user_id, token_hash, csrf_token, facility_id, ip, user_agent,
        mfa_verified, idle_expires_at, absolute_expires_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [sessionId, opts.userId, hmacToken(token), csrfToken, opts.facilityId, opts.ip ?? null, opts.userAgent ?? null, opts.mfaVerified, idle, absolute],
+    [sessionId, opts.userId, hmacToken(secretPart), csrfToken, opts.facilityId, opts.ip ?? null, opts.userAgent ?? null, opts.mfaVerified, idle, absolute],
   );
+  const token = encodeSessionCookie({
+    v: 1,
+    sid: sessionId,
+    sec: secretPart,
+    uid: opts.userId,
+    fid: opts.facilityId,
+    csrf: csrfToken,
+    mfa: opts.mfaVerified,
+    exp: absoluteMs,
+  });
   return { token, csrfToken, sessionId };
 }
 
@@ -163,7 +237,7 @@ export async function verifyMfaForSession(auth: AuthContext, code: string) {
   );
   const secret = decryptField(row.rows[0]?.mfa_secret_enc, `users.mfa_secret_enc:${auth.user.id}`);
   if (!secret) throw new AppError(400, 'mfa_not_configured', 'لم يتم إعداد MFA لهذا الحساب');
-  const clean = code.replace(/[\s-]/g, '');
+  const clean = normalizeAuthDigits(code).toUpperCase();
   let valid = verifyTotp(secret, clean);
   if (!valid) valid = await consumeRecoveryCode(auth.user.id, clean);
   if (!valid) throw new AppError(401, 'invalid_mfa_code', 'رمز التحقق غير صحيح');
@@ -192,7 +266,8 @@ export async function confirmMfaSetup(auth: AuthContext, code: string) {
   const row = await db.query<{ mfa_secret_enc: string | null }>('SELECT mfa_secret_enc FROM users WHERE id = $1', [auth.user.id]);
   const secret = decryptField(row.rows[0]?.mfa_secret_enc, `users.mfa_secret_enc:${auth.user.id}`);
   if (!secret) throw new AppError(400, 'mfa_not_configured', 'ابدأ إعداد MFA أولًا');
-  if (!verifyTotp(secret, code)) throw new AppError(400, 'invalid_mfa_code', 'رمز التحقق غير صحيح');
+  const clean = normalizeAuthDigits(code);
+  if (!verifyTotp(secret, clean)) throw new AppError(400, 'invalid_mfa_code', 'رمز التحقق غير صحيح');
   const codes = Array.from({ length: 8 }, () => randomToken(6).replace(/[^A-Za-z0-9]/g, '').slice(0, 10).toUpperCase());
   await db.query('UPDATE users SET mfa_enabled = true WHERE id = $1', [auth.user.id]);
   await db.query('DELETE FROM user_recovery_codes WHERE user_id = $1', [auth.user.id]);

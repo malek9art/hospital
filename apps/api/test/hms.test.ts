@@ -3312,3 +3312,125 @@ describe('human resources, medical licensing (SCFHS), roster and leave governanc
   });
 });
 
+describe('login resilience, session envelope security & Supabase bootstrap bundle', () => {
+  it('allows re-login with whitespace/uppercase email over an existing session cookie without CSRF deadlock and revokes prior session', async () => {
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      remoteAddress: '10.99.0.1',
+      payload: { email: '  DR.AHMED@DEMO.HMS  ', password: 'Doctor#Demo2026' },
+    });
+    expect(first.statusCode).toBe(200);
+    const firstCookie = first.cookies.find((c: any) => c.name === 'hms_session');
+    expect(firstCookie?.value).toMatch(/^s1\./);
+
+    // Re-login as another account while browser still sends firstCookie and NO x-csrf-token
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      remoteAddress: '10.99.0.1',
+      cookies: { hms_session: firstCookie!.value },
+      payload: { email: 'admin@demo.hms', password: 'Admin#Demo2026' },
+    });
+    expect(second.statusCode).toBe(200);
+    const secondCookie = second.cookies.find((c: any) => c.name === 'hms_session');
+    expect(secondCookie?.value).toBeTruthy();
+    expect(secondCookie!.value).not.toBe(firstCookie!.value);
+
+    // First session must now be revoked (401) and dead cookie evicted
+    const oldMe = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      cookies: { hms_session: firstCookie!.value },
+    });
+    expect(oldMe.statusCode).toBe(401);
+    expect(String(oldMe.headers['set-cookie'] ?? '')).toContain('hms_session=;');
+
+    // Second session works and logout succeeds even without x-csrf-token (same-origin)
+    const activeMe = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      cookies: { hms_session: secondCookie!.value },
+    });
+    expect(activeMe.statusCode).toBe(200);
+    expect(activeMe.json().user.email).toBe('admin@demo.hms');
+
+    const out = await app.inject({
+      method: 'POST',
+      url: '/api/auth/logout',
+      cookies: { hms_session: secondCookie!.value },
+    });
+    expect(out.statusCode).toBe(200);
+
+    const afterLogout = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      cookies: { hms_session: secondCookie!.value },
+    });
+    expect(afterLogout.statusCode).toBe(401);
+  });
+
+  it('rejects tampered signed session cookies and normalizes Arabic numerals in MFA codes', async () => {
+    const { decodeSessionCookie, normalizeAuthDigits } = await import('../src/auth/service');
+    expect(normalizeAuthDigits('١٢٣-٤٥٦')).toBe('123456');
+    expect(normalizeAuthDigits('۰۹۸ ۷۶۵')).toBe('098765');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      remoteAddress: '10.99.0.2',
+      payload: { email: 'hr@demo.hms', password: 'HR#Demo2026' },
+    });
+    expect(res.statusCode).toBe(200);
+    const raw = res.cookies.find((c: any) => c.name === 'hms_session')!.value;
+    expect(decodeSessionCookie(raw)?.envelope?.v).toBe(1);
+
+    // Flip one character in the signature -> rejected
+    const tampered = raw.slice(0, -2) + (raw.endsWith('AA') ? 'BB' : 'AA');
+    expect(decodeSessionCookie(tampered)).toBeNull();
+    const meTampered = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      cookies: { hms_session: tampered },
+    });
+    expect(meTampered.statusCode).toBe(401);
+  });
+
+  it('validates db/supabase-schema.sql execution, checksum parity, and PostgREST anon role lockdown', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { PGlite } = await import('@electric-sql/pglite');
+
+    const sqlPath = path.resolve(__dirname, '../../../db/supabase-schema.sql');
+    const bundleSql = fs.readFileSync(sqlPath, 'utf8');
+    const pg = await PGlite.create();
+    try {
+      // Simulate Supabase default roles & permissive default grants
+      await pg.exec(`
+        CREATE ROLE anon NOLOGIN;
+        CREATE ROLE authenticated NOLOGIN;
+        GRANT USAGE ON SCHEMA public TO anon, authenticated;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;
+      `);
+
+      await pg.exec(bundleSql);
+
+      // Verify all 19 migrations are recorded
+      const migs = await pg.query<{ count: string }>('SELECT count(*) FROM public.schema_migrations');
+      expect(Number(migs.rows[0].count)).toBe(19);
+
+      // Verify anon role is strictly denied SELECT on users, sessions, and patients
+      await expect(
+        pg.exec('BEGIN; SET LOCAL ROLE anon; SELECT count(*) FROM public.users; COMMIT;'),
+      ).rejects.toThrow(/permission denied/i);
+      await pg.exec('ROLLBACK').catch(() => undefined);
+
+      // Verify hms_app role works via SET LOCAL ROLE
+      await pg.exec('BEGIN; SET LOCAL ROLE hms_app; SELECT count(*) FROM public.facilities; COMMIT;');
+    } finally {
+      await pg.close();
+    }
+  });
+});
+
+

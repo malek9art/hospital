@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { api, me, resetCsrf, setUnauthorizedHandler, type Me } from './api';
 import { ErrorBoundary, Layout, PageSkeleton, ToastProvider } from './components';
-import { useHashRoute } from './hooks/useHashRoute';
+import { clearHash, navigate, parseHash, useHashRoute } from './hooks/useHashRoute';
 import { setFormatLanguage } from './lib/format';
 import { canAccessPage, defaultLandingPage, findNavItem } from './lib/navigation';
 import {
@@ -70,6 +70,14 @@ function AppContent() {
     const loaded = loadUserPreferences(m.user.id, m.user.preferredLanguage);
     setPrefs(loaded);
     saveUserPreferences(m.user.id, loaded);
+    // Ensure switching accounts never strands the new user on an inaccessible hash from a previous user.
+    const current = parseHash(window.location.hash);
+    if (!current.segment || !current.page || !canAccessPage(m, current.page)) {
+      const saved = loaded.lastHash ? parseHash(loaded.lastHash) : null;
+      const target =
+        saved?.page && canAccessPage(m, saved.page) ? loaded.lastHash! : `#/${defaultLandingPage(m)}`;
+      navigate(target, true);
+    }
     setAuth(m);
   }, []);
 
@@ -83,6 +91,7 @@ function AppContent() {
     setUnauthorizedHandler(() => {
       resetCsrf();
       clearReferenceCache();
+      clearHash();
       setAuth(null);
     });
 
@@ -111,6 +120,7 @@ function AppContent() {
     }
     resetCsrf();
     clearReferenceCache();
+    clearHash();
     setAuth(null);
   }, []);
 

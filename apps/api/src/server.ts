@@ -10,7 +10,7 @@ import { assertSessionUsable } from './auth/context';
 import { csrfMatches } from './auth/service';
 import { AppError } from './lib/errors';
 import { COOKIE_NAME } from './lib/constants';
-import { authRoutes } from './modules/auth/routes';
+import { authRoutes, clearSessionCookie } from './modules/auth/routes';
 import { patientRoutes } from './modules/patients/routes';
 import { appointmentRoutes } from './modules/appointments/routes';
 import { encounterRoutes } from './modules/encounters/routes';
@@ -97,22 +97,34 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   });
 
   // ---- Origin + CSRF protection -------------------------------------------------
+  const normalizeHost = (raw: string): string =>
+    raw.trim().toLowerCase().replace(/:(80|443)$/, '');
+
   app.addHook('preHandler', async (req) => {
     const method = req.method.toUpperCase();
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
       const origin = req.headers.origin;
       if (origin) {
-        const host = req.headers.host;
+        if (origin === 'null' && req.headers['sec-fetch-site'] === 'same-origin') {
+          return;
+        }
+        const host = req.headers.host ? normalizeHost(req.headers.host) : '';
         let originHost = '';
         try {
-          originHost = new URL(origin).host;
+          originHost = normalizeHost(new URL(origin).host);
         } catch {
           originHost = '';
         }
         // Behind a proxy/CDN the public hostname arrives in x-forwarded-host.
         const forwarded = req.headers['x-forwarded-host'];
-        const forwardedHost = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : '';
-        if (!host || (originHost !== host && originHost !== forwardedHost)) {
+        const forwardedHosts =
+          typeof forwarded === 'string'
+            ? forwarded
+                .split(',')
+                .map((h) => normalizeHost(h))
+                .filter(Boolean)
+            : [];
+        if (!originHost || !host || (originHost !== host && !forwardedHosts.includes(originHost))) {
           throw new AppError(403, 'origin_rejected', 'مصدر الطلب غير موثوق');
         }
       }
@@ -120,10 +132,17 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
   });
 
   app.addHook('preHandler', async (req) => {
+    const pathname = req.url.split('?')[0];
     const token = req.cookies?.[COOKIE_NAME];
     req.auth = await loadAuthFromToken(token);
+    // `/api/auth/login` authenticates fresh credentials (protected by Origin + rate-limit)
+    // and must never fail because an old or MFA-pending session cookie is still in the browser.
+    if (pathname === '/api/auth/login') return;
     if (!req.auth) return;
-    assertSessionUsable(req.auth, req.url.split('?')[0]);
+    assertSessionUsable(req.auth, pathname);
+    // Same-origin `/api/auth/logout` must always be able to revoke & clear the session
+    // even if the client tab lost its in-memory CSRF token.
+    if (pathname === '/api/auth/logout') return;
     const method = req.method.toUpperCase();
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
       const provided = req.headers['x-csrf-token'];
@@ -138,6 +157,10 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
       reply.header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       reply.header('Pragma', 'no-cache');
       reply.header('X-Request-Id', req.id);
+      // Automatically evict dead/expired session cookies so browsers stop re-sending them.
+      if (req.cookies?.[COOKIE_NAME] && !req.auth && !reply.getHeader('set-cookie')) {
+        clearSessionCookie(reply);
+      }
     }
     return payload;
   });
@@ -199,6 +222,7 @@ export async function buildServer(opts: BuildOptions = {}): Promise<FastifyInsta
       ok: true,
       mode: cfg.DB_MODE,
       persistence: ephemeral ? 'ephemeral' : 'durable',
+      supabaseConfigured: Boolean(cfg.supabaseUrl || (cfg.DB_MODE === 'postgres' && cfg.databaseUrl?.includes('supabase'))),
       time: new Date().toISOString(),
     };
   });

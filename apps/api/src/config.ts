@@ -7,9 +7,16 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(8080),
   HOST: z.string().default('0.0.0.0'),
-  DB_MODE: z.enum(['pglite', 'postgres']).default('pglite'),
+  DB_MODE: z.enum(['pglite', 'postgres']).optional(),
   PGLITE_DIR: z.string().default('.data/pglite'),
   DATABASE_URL: z.string().optional(),
+  POSTGRES_URL: z.string().optional(),
+  SUPABASE_DB_URL: z.string().optional(),
+  DATABASE_SSL: z.enum(['auto', 'true', 'false']).default('auto'),
+  SUPABASE_URL: z.string().optional(),
+  NEXT_PUBLIC_SUPABASE_URL: z.string().optional(),
+  SUPABASE_ANON_KEY: z.string().optional(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().optional(),
   DB_SET_ROLE: z.string().default('hms_app'),
   SESSION_SECRET: z.string().optional(),
   ENCRYPTION_KEY: z.string().optional(),
@@ -21,14 +28,17 @@ const EnvSchema = z.object({
   COOKIE_SECURE: z.string().default('false').transform((v) => v === 'true'),
   SEED_DEMO: z.string().default('true').transform((v) => v === 'true'),
   RATE_LIMIT_MAX: z.coerce.number().default(600),
-  AUTH_RATE_LIMIT_MAX: z.coerce.number().default(10),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().default(25),
   WEB_DIR: z.string().default(path.resolve(__dirname, '../../web/dist')),
   TRUST_PROXY: z.string().default('false').transform((v) => v === 'true'),
   // Serverless only: migrate + seed automatically when the database is empty.
   AUTO_BOOTSTRAP: z.string().default('false').transform((v) => v === 'true'),
 });
 
-export type AppConfig = z.infer<typeof EnvSchema> & {
+export type AppConfig = Omit<z.infer<typeof EnvSchema>, 'DB_MODE'> & {
+  DB_MODE: 'pglite' | 'postgres';
+  databaseUrl: string | undefined;
+  supabaseUrl: string | undefined;
   sessionSecret: Buffer;
   encryptionKey: Buffer;
   searchHashKey: Buffer;
@@ -83,10 +93,16 @@ function loadSecrets(env: z.infer<typeof EnvSchema>) {
 export function loadConfig(): AppConfig {
   const env = EnvSchema.parse(process.env);
   const secrets = loadSecrets(env);
-  if (env.DB_MODE === 'postgres' && !env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required when DB_MODE=postgres');
+  const databaseUrl = [env.DATABASE_URL, env.SUPABASE_DB_URL, env.POSTGRES_URL]
+    .map((u) => u?.trim())
+    .find((u) => Boolean(u));
+  const dbMode: 'pglite' | 'postgres' =
+    env.DB_MODE ?? (env.NODE_ENV !== 'test' && databaseUrl ? 'postgres' : 'pglite');
+  if (dbMode === 'postgres' && !databaseUrl) {
+    throw new Error('DATABASE_URL (or SUPABASE_DB_URL / POSTGRES_URL) is required when DB_MODE=postgres');
   }
-  return { ...env, ...secrets };
+  const supabaseUrl = (env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL)?.trim() || undefined;
+  return { ...env, DB_MODE: dbMode, databaseUrl, supabaseUrl, ...secrets };
 }
 
 let cached: AppConfig | null = null;
